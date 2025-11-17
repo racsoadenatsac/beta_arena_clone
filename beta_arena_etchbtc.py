@@ -752,37 +752,67 @@ class ETHEUROpportunityDetector:
 
 class GrokTrader:
     """Grok AI trader for ETH/EUR decisions"""
-    
-    def __init__(self, api_key: str, config: Config):
+
+    def __init__(self, api_key: str, config: Config, get_recent_trades_fn=None):
         self.api_key = api_key
         self.config = config
         self.cycle_analyzer = CyclePositionAnalyzer(config)
         self.base_url = "https://api.x.ai/v1"
+        self.get_recent_trades = get_recent_trades_fn
     
-    def evaluate_opportunities(self, opportunities: List[TradeOpportunity], 
+    def evaluate_opportunities(self, opportunities: List[TradeOpportunity],
                               state: Dict, market_info: Dict) -> Optional[TradeOpportunity]:
         """Select best opportunity"""
-        
+
         if not opportunities:
             return None
-        
+
+        # Get recent trade history
+        recent_trades = []
+        last_trade_time = None
+        minutes_since_last_trade = None
+
+        if self.get_recent_trades:
+            recent_trades = self.get_recent_trades(5)  # Get last 5 trades
+
+            if recent_trades:
+                # Calculate time since last trade
+                last_trade_time_str = recent_trades[0]["timestamp"]
+                last_trade_time = datetime.fromisoformat(last_trade_time_str)
+                now = datetime.now()
+                minutes_since_last_trade = (now - last_trade_time).total_seconds() / 60
+
+                # CRITICAL: Minimum time buffer between trades (5 minutes)
+                # Only allow trades within 5 minutes if it's a critical safety exit
+                if minutes_since_last_trade < 5.0:
+                    # Check if any opportunity is a critical safety trade
+                    is_critical = any(opp.type == "safety_exit" for opp in opportunities)
+
+                    if not is_critical:
+                        print(f"      ⏸️ TRADE COOLDOWN: Last trade {minutes_since_last_trade:.1f} min ago (min: 5 min)")
+                        print(f"         Last trade: {recent_trades[0]['from_asset']}→{recent_trades[0]['to_asset']}")
+                        return None
+
         if not self.api_key:
             # Fallback: prioritize cycle signals
             for opp in opportunities:
                 if opp.type in ["cycle_exit", "cycle_entry"]:
                     return opp
             return opportunities[0]
-        
+
         btc_price = state["market"]["BTC"].price
         cycle_phase = self.cycle_analyzer.get_cycle_phase(btc_price)
-        
+
+        if minutes_since_last_trade:
+            print(f"      ⏰ Last trade: {minutes_since_last_trade:.1f} minutes ago")
+
         print(f"      🌐 Calling Grok (Cycle: {cycle_phase})...")
-        
+
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json"
         }
-        
+
         context = {
             "current_position": state["current_position"],
             "portfolio_value": state["portfolio_value"],
@@ -791,6 +821,18 @@ class GrokTrader:
             "cycle_phase": cycle_phase,
             "btc_price": btc_price,
             "eth_price": state["market"]["ETH"].price,
+            "minutes_since_last_trade": minutes_since_last_trade,
+            "recent_trades": [
+                {
+                    "timestamp": trade["timestamp"],
+                    "from_asset": trade["from_asset"],
+                    "to_asset": trade["to_asset"],
+                    "trade_type": trade["trade_type"],
+                    "improvement": trade["improvement"],
+                    "reasoning": trade["reasoning"]
+                }
+                for trade in recent_trades
+            ] if recent_trades else [],
             "opportunities": [
                 {
                     "index": i,
@@ -805,11 +847,34 @@ class GrokTrader:
             ]
         }
         
+        # Format trade history for prompt
+        trade_history_text = "No recent trades"
+        if recent_trades:
+            trade_history_text = "\n".join([
+                f"   - {trade['timestamp']}: {trade['from_asset']}→{trade['to_asset']} "
+                f"({trade['trade_type']}, {trade['reasoning']})"
+                for trade in recent_trades[:3]
+            ])
+
+        time_since_text = f"{minutes_since_last_trade:.1f} minutes ago" if minutes_since_last_trade else "No trades yet"
+
         system_prompt = f"""You are Grok, trading ETH/EUR with cycle awareness.
 
 CURRENT CYCLE: {cycle_phase}
 BTC PRICE: €{btc_price:,.0f} (market indicator)
 ETH WATERMARK: {state.get("watermark", 0):.6f}
+
+TRADE HISTORY (last {len(recent_trades)} trades):
+{trade_history_text}
+
+TIME SINCE LAST TRADE: {time_since_text}
+
+CRITICAL RULES:
+1. NEVER make contradictory trades within 5 minutes unless market conditions have dramatically changed
+2. If we just entered ETH, DO NOT immediately exit unless there's a critical risk (>3% drop, extreme overbought)
+3. If we just exited to EUR, DO NOT immediately re-enter unless RSI shows extreme oversold (<20) AND significant price improvement
+4. Consider the reasoning of recent trades - don't repeat failed strategies
+5. Respect the watermark system - every ETH entry must beat the previous watermark
 
 STRATEGY:
 - Only trade ETH (with watermark) and EUR (no watermark)
@@ -820,9 +885,10 @@ STRATEGY:
 
 Respond with JSON:
 {{
-    "selected_index": 0-2,
-    "reasoning": "why this trade fits the cycle",
-    "strategy": "aggressive/moderate/conservative"
+    "selected_index": 0-2 or null to HOLD,
+    "reasoning": "why this trade fits the cycle and doesn't contradict recent trades",
+    "strategy": "aggressive/moderate/conservative",
+    "should_trade": true/false
 }}"""
         
         messages = [
@@ -849,9 +915,16 @@ Respond with JSON:
                 result = response.json()
                 content = result["choices"][0]["message"]["content"]
                 decision = json.loads(content)
-                
-                selected_idx = decision.get("selected_index", 0)
-                if 0 <= selected_idx < len(opportunities):
+
+                # Check if Grok recommends trading
+                should_trade = decision.get("should_trade", True)
+
+                if not should_trade:
+                    print(f"         ⏸️ Grok: HOLD - {decision.get('reasoning', 'No trade recommended')}")
+                    return None
+
+                selected_idx = decision.get("selected_index")
+                if selected_idx is not None and 0 <= selected_idx < len(opportunities):
                     selected = opportunities[selected_idx]
                     print(f"         ✅ Grok: {selected.from_asset}→{selected.to_asset}")
                     print(f"         Strategy: {decision.get('strategy', 'unknown')}")
@@ -875,22 +948,24 @@ class ETHEURBot:
         self.watermark = Watermark()
         self.initial_value = 0
         
-        # Components
-        self.market_hours = MarketHoursDetector()
-        self.market = KrakenMarketProvider()
-        self.opportunity_detector = ETHEUROpportunityDetector(config)
-        self.ai = GrokTrader(config.grok_api_key, config)
-        self.imessage = IMessageNotifier(config.imessage_recipient, config.bot_name) if config.enable_imessage else None
-        
         # Tracking
         self.total_trades = 0
         self.successful_trades = 0
         self.total_fees = 0
-        
-        # Database
+
+        # Database - must be initialized before creating AI trader
         self.db_name = f"eth_eur_{config.bot_name.lower()}.db"
         self._init_db()
-        
+
+        # Components
+        self.market_hours = MarketHoursDetector()
+        self.market = KrakenMarketProvider()
+        self.opportunity_detector = ETHEUROpportunityDetector(config)
+
+        # Pass get_recent_trades method to GrokTrader for context
+        self.ai = GrokTrader(config.grok_api_key, config, get_recent_trades_fn=self.get_recent_trades)
+        self.imessage = IMessageNotifier(config.imessage_recipient, config.bot_name) if config.enable_imessage else None
+
         self._print_header()
     
     def _print_header(self):
@@ -973,11 +1048,40 @@ class ETHEURBot:
         """Calculate current portfolio value"""
         if not self.current_position:
             return 0
-        
+
         if self.current_position.symbol == "EUR":
             return self.current_position.quantity
         else:  # ETH
             return self.current_position.quantity * market["ETH"].bid
+
+    def get_recent_trades(self, limit: int = 10) -> List[Dict]:
+        """Get recent trades from database"""
+        self.cursor.execute("""
+            SELECT timestamp, from_asset, to_asset, amount, fee, new_quantity,
+                   improvement, trade_type, cycle_phase, reasoning
+            FROM trades
+            ORDER BY id DESC
+            LIMIT ?
+        """, (limit,))
+
+        rows = self.cursor.fetchall()
+        trades = []
+        for row in rows:
+            trades.append({
+                "timestamp": row[0],
+                "from_asset": row[1],
+                "to_asset": row[2],
+                "amount": row[3],
+                "fee": row[4],
+                "new_quantity": row[5],
+                "improvement": row[6],
+                "trade_type": row[7],
+                "cycle_phase": row[8],
+                "reasoning": row[9]
+            })
+
+        # Return in chronological order (most recent first)
+        return trades
     
     def execute_trade(self, opportunity: TradeOpportunity, market: Dict[str, MarketData]) -> bool:
         """Execute trade"""
