@@ -325,18 +325,20 @@ class IMessageNotifier:
         new_qty = trade_info.get("new_quantity", 0)
         new_price = trade_info.get("new_price", 0)
         reasoning = trade_info.get("reasoning", "")
-        
+
         message = f"🔄 TRADE EXECUTED: {from_asset} → {to_asset}\n"
         message += f"      Type: {trade_type}\n"
         message += f"      Value: €{value:,.2f} | Fee: €{fee:.2f}\n"
-        
+
         if to_asset == "EUR":
-            message += f"      New Position: €{new_qty:,.2f}\n"
+            eth_price = trade_info.get("eth_price", 0)
+            message += f"      New Position: €{new_qty:,.2f} | ETH @ €{eth_price:,.2f}\n"
         else:
-            message += f"      New Position: {new_qty:.6f} {to_asset} @ €{new_price:,.2f}\n"
-        
+            eur_equivalent = new_qty * new_price
+            message += f"      New Position: {new_qty:.6f} | ETH @ €{new_price:,.2f} | EUR €{eur_equivalent:,.2f}\n"
+
         message += f"      Reason: {reasoning}"
-        
+
         return message
 
 # ==============================================================================
@@ -632,12 +634,6 @@ class ETHEUROpportunityDetector:
                 market, profit_pct, btc_price, eth_price
             )
             opportunities.extend(exit_ops)
-            
-            # Check if we can improve ETH watermark (shouldn't happen but safety check)
-            watermark_ops = self._detect_watermark_improvement(
-                market, watermark, portfolio_value, min_improvement, cycle_phase
-            )
-            opportunities.extend(watermark_ops)
         
         # Sort by expected return
         opportunities.sort(key=lambda x: x.expected_return, reverse=True)
@@ -720,29 +716,6 @@ class ETHEUROpportunityDetector:
                             "improvement": improvement
                         }
                     ))
-        
-        return opportunities
-    
-    def _detect_watermark_improvement(self, market: Dict, watermark: float,
-                                     portfolio_value: float, min_improvement: float,
-                                     cycle_phase: str) -> List[TradeOpportunity]:
-        """Check if current ETH position beats watermark (shouldn't happen)"""
-        opportunities = []
-        
-        # This is a safety check - we shouldn't be in ETH without beating watermark
-        current_eth = portfolio_value / market["ETH"].bid
-        
-        if current_eth <= watermark:
-            # We're below watermark - should exit to EUR and wait
-            opportunities.append(TradeOpportunity(
-                type="safety_exit",
-                from_asset="ETH",
-                to_asset="EUR",
-                expected_return=0.01,
-                confidence=0.95,
-                reasoning=f"Below watermark - exit and wait for better entry",
-                market_conditions={"cycle_phase": cycle_phase}
-            ))
         
         return opportunities
 
@@ -1040,14 +1013,16 @@ class ETHEURBot:
         print(f"\n   🔄 TRADE EXECUTED: {from_asset} → {to_asset}")
         print(f"      Type: {opportunity.type}")
         print(f"      Value: €{old_value:,.2f} | Fee: €{fee:.2f}")
-        
+
         if to_asset == "EUR":
-            print(f"      New Position: €{new_qty:,.2f}")
+            eth_price = market["ETH"].price
+            print(f"      New Position: €{new_qty:,.2f} | ETH @ €{eth_price:,.2f}")
         else:
-            print(f"      New Position: {new_qty:.6f} ETH @ €{new_price:,.2f}")
+            eur_equivalent = new_qty * new_price
+            print(f"      New Position: {new_qty:.6f} | ETH @ €{new_price:,.2f} | EUR €{eur_equivalent:,.2f}")
             if watermark_updated:
                 print(f"      🏔️ NEW WATERMARK: {new_qty:.6f} ETH (+{improvement*100:.3f}%)")
-        
+
         print(f"      Reason: {opportunity.reasoning}")
         
         # Send notification
@@ -1060,6 +1035,7 @@ class ETHEURBot:
                 "fee": fee,
                 "new_quantity": new_qty,
                 "new_price": new_price,
+                "eth_price": market["ETH"].price,
                 "reasoning": opportunity.reasoning
             }
             self.imessage.send_trade_notification(trade_info)
