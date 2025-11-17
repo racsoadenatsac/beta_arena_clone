@@ -951,6 +951,9 @@ class GrokTrader:
             "btc_price": btc_price,
             "eth_price": state["market"]["ETH"].price,
             "minutes_since_last_trade": minutes_since_last_trade,
+            "open_markets": market_info.get("open_markets", []),
+            "is_nyse_open": market_info.get("is_nyse_open", False),
+            "is_major_market_open": market_info.get("is_major_market_open", False),
             "recent_trades": [
                 {
                     "timestamp": trade["timestamp"],
@@ -990,12 +993,22 @@ class GrokTrader:
         eur_watermark = state.get("eur_watermark", 0)
         eur_watermark_text = f"EUR WATERMARK: €{eur_watermark:,.2f} (reference only - aim to match or exceed)" if eur_watermark > 0 else "EUR WATERMARK: Not set yet"
 
+        # Market hours status
+        open_markets = market_info.get("open_markets", [])
+        if market_info.get("is_nyse_open"):
+            market_status_text = "MARKET HOURS: NYSE/NASDAQ open (9:30am-4pm ET) - High volume period"
+        elif open_markets:
+            market_status_text = f"MARKET HOURS: {', '.join(open_markets)} open - Moderate activity"
+        else:
+            market_status_text = "MARKET HOURS: All major markets closed - Lower volume, consider price moves carefully"
+
         system_prompt = f"""You are Grok, trading ETH/EUR with cycle awareness.
 
 CURRENT CYCLE: {cycle_phase}
 BTC PRICE: €{btc_price:,.0f} (market indicator)
 ETH WATERMARK: {state.get("watermark", 0):.6f} (STRICT - must beat on every entry)
 {eur_watermark_text}
+{market_status_text}
 
 TRADE HISTORY (last {len(recent_trades)} trades):
 {trade_history_text}
@@ -1433,22 +1446,26 @@ class ETHEURBot:
     def run(self):
         """Main loop"""
         self.initialize()
-        
+
         while True:
             try:
                 market_info = self.market_hours.get_market_session_info()
-                
-                # Dynamic interval
-                if market_info["is_nyse_open"]:
-                    interval = 30
-                elif market_info["is_major_market_open"]:
-                    interval = 300
-                else:
-                    interval = 600
-                
+
+                # Fixed interval - always check every 30 seconds
+                interval = 30
+
                 self.run_iteration()
-                
-                print(f"\n⏰ Next check in {interval}s...")
+
+                # Show market status in next check message
+                market_status = ""
+                if market_info["is_nyse_open"]:
+                    market_status = " (NYSE open)"
+                elif market_info["is_major_market_open"]:
+                    market_status = f" ({', '.join(market_info['open_markets'])} open)"
+                else:
+                    market_status = " (markets closed)"
+
+                print(f"\n⏰ Next check in {interval}s{market_status}...")
                 time.sleep(interval)
                 
             except KeyboardInterrupt:
