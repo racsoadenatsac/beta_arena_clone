@@ -675,12 +675,94 @@ class KrakenMarketProvider:
 
 class ETHEUROpportunityDetector:
     """Detect ETH/EUR trading opportunities"""
-    
+
     def __init__(self, config: Config):
         self.config = config
         self.cycle_analyzer = CyclePositionAnalyzer(config)
         self.eur_exit_price = None
-    
+        self.market_provider = None  # Will be set by bot
+
+    def _analyze_historical_trend(self, market: Dict) -> Tuple[str, str, Dict]:
+        """Analyze historical price data to determine trend direction and strength
+
+        Returns:
+            trend_direction: "upcycle", "downcycle", or "sideways"
+            trend_strength: "strong", "moderate", or "weak"
+            details: Dict with analysis details
+        """
+        if not self.market_provider:
+            return "sideways", "weak", {}
+
+        price_history = self.market_provider.price_history.get("ETH", deque())
+
+        if len(price_history) < 60:
+            # Not enough data
+            return "sideways", "weak", {"reason": "insufficient_data"}
+
+        prices = list(price_history)
+        current_price = prices[-1]
+
+        # Calculate price changes over different timeframes
+        price_1h_ago = prices[-60] if len(prices) >= 60 else prices[0]
+        price_3h_ago = prices[-180] if len(prices) >= 180 else prices[0]
+        price_6h_ago = prices[0]
+
+        change_1h = ((current_price - price_1h_ago) / price_1h_ago) * 100
+        change_3h = ((current_price - price_3h_ago) / price_3h_ago) * 100
+        change_6h = ((current_price - price_6h_ago) / price_6h_ago) * 100
+
+        # Calculate RSI trajectory (is RSI rising or falling?)
+        rsi_current = market["ETH"].rsi_estimate
+
+        # Look at recent price momentum (last 30 minutes vs previous 30 minutes)
+        recent_30m = prices[-30:] if len(prices) >= 30 else prices
+        previous_30m = prices[-60:-30] if len(prices) >= 60 else prices[:len(prices)//2]
+
+        recent_avg = sum(recent_30m) / len(recent_30m) if recent_30m else current_price
+        previous_avg = sum(previous_30m) / len(previous_30m) if previous_30m else current_price
+
+        momentum_30m = ((recent_avg - previous_avg) / previous_avg) * 100
+
+        # Determine trend direction
+        # Upcycle: Multiple timeframes showing upward movement
+        # Downcycle: Multiple timeframes showing downward movement
+        upward_signals = sum([change_1h > 0.5, change_3h > 1.0, change_6h > 1.5, momentum_30m > 0.3])
+        downward_signals = sum([change_1h < -0.5, change_3h < -1.0, change_6h < -1.5, momentum_30m < -0.3])
+
+        if upward_signals >= 3:
+            trend_direction = "upcycle"
+        elif downward_signals >= 3:
+            trend_direction = "downcycle"
+        elif upward_signals >= 2:
+            trend_direction = "upcycle"
+        elif downward_signals >= 2:
+            trend_direction = "downcycle"
+        else:
+            trend_direction = "sideways"
+
+        # Determine trend strength based on magnitude of changes
+        max_change = max(abs(change_1h), abs(change_3h), abs(change_6h))
+
+        if max_change > 3.0:
+            trend_strength = "strong"
+        elif max_change > 1.5:
+            trend_strength = "moderate"
+        else:
+            trend_strength = "weak"
+
+        details = {
+            "change_1h": change_1h,
+            "change_3h": change_3h,
+            "change_6h": change_6h,
+            "momentum_30m": momentum_30m,
+            "rsi": rsi_current,
+            "upward_signals": upward_signals,
+            "downward_signals": downward_signals,
+            "data_points": len(prices)
+        }
+
+        return trend_direction, trend_strength, details
+
     def detect_opportunities(self, state: Dict, market_info: Dict) -> List[TradeOpportunity]:
         """Detect trading opportunities"""
         opportunities = []
@@ -737,6 +819,117 @@ class ETHEUROpportunityDetector:
 
         # Calculate what EUR value we'd get after exit
         expected_eur = portfolio_value * (1 - self.config.fee_rate)
+
+        # ========================================================================
+        # SPECIAL CASE: Initial exit from starting position (EUR watermark = 0)
+        # ========================================================================
+        if eur_watermark == 0 and profit_pct > 0.3:
+            # We have some profit and haven't exited yet - analyze historical trend
+            trend_direction, trend_strength, trend_details = self._analyze_historical_trend(market)
+
+            # Build reasoning based on trend analysis
+            change_1h = trend_details.get("change_1h", 0)
+            change_3h = trend_details.get("change_3h", 0)
+            change_6h = trend_details.get("change_6h", 0)
+            momentum_30m = trend_details.get("momentum_30m", 0)
+
+            trend_summary = f"1h: {change_1h:+.2f}%, 3h: {change_3h:+.2f}%, 6h: {change_6h:+.2f}%"
+
+            if trend_direction == "downcycle":
+                # Downcycle detected - exit immediately to lock in profit
+                opportunities.append(TradeOpportunity(
+                    type="initial_exit",
+                    from_asset="ETH",
+                    to_asset="EUR",
+                    expected_return=profit_pct / 100,
+                    confidence=0.85,
+                    reasoning=f"Initial exit: Downcycle detected ({trend_strength}) - lock in {profit_pct:.2f}% profit. Trend: {trend_summary}",
+                    market_conditions={
+                        "trend": trend_direction,
+                        "trend_strength": trend_strength,
+                        "profit_pct": profit_pct,
+                        "expected_eur": expected_eur,
+                        **trend_details
+                    }
+                ))
+                print(f"      🔍 Initial Exit Analysis: DOWNCYCLE ({trend_strength}) - Exit recommended")
+                print(f"         Price changes: {trend_summary}")
+
+            elif trend_direction == "sideways" or trend_strength == "weak":
+                # Sideways or weak trend - if we have decent profit, consider exiting
+                if profit_pct > 1.0:
+                    opportunities.append(TradeOpportunity(
+                        type="initial_exit",
+                        from_asset="ETH",
+                        to_asset="EUR",
+                        expected_return=profit_pct / 100,
+                        confidence=0.75,
+                        reasoning=f"Initial exit: Sideways/weak trend with {profit_pct:.2f}% profit - lock in gains. Trend: {trend_summary}",
+                        market_conditions={
+                            "trend": trend_direction,
+                            "trend_strength": trend_strength,
+                            "profit_pct": profit_pct,
+                            "expected_eur": expected_eur,
+                            **trend_details
+                        }
+                    ))
+                    print(f"      🔍 Initial Exit Analysis: {trend_direction.upper()} ({trend_strength}) with {profit_pct:.2f}% profit")
+                    print(f"         Price changes: {trend_summary}")
+                else:
+                    print(f"      🔍 Initial Exit Analysis: {trend_direction.upper()} ({trend_strength}) - waiting for better profit ({profit_pct:.2f}%)")
+
+            elif trend_direction == "upcycle":
+                # Upcycle detected - wait for better price, but create opportunity for Grok to decide
+                if profit_pct > 1.5:
+                    # Good profit already - let Grok decide if it's time
+                    opportunities.append(TradeOpportunity(
+                        type="initial_exit",
+                        from_asset="ETH",
+                        to_asset="EUR",
+                        expected_return=profit_pct / 100,
+                        confidence=0.65,
+                        reasoning=f"Initial exit opportunity: Upcycle ({trend_strength}) with {profit_pct:.2f}% profit - Grok to decide timing. Trend: {trend_summary}",
+                        market_conditions={
+                            "trend": trend_direction,
+                            "trend_strength": trend_strength,
+                            "profit_pct": profit_pct,
+                            "expected_eur": expected_eur,
+                            **trend_details
+                        }
+                    ))
+                    print(f"      🔍 Initial Exit Analysis: UPCYCLE ({trend_strength}) - {profit_pct:.2f}% profit, let Grok decide timing")
+                    print(f"         Price changes: {trend_summary}")
+                elif profit_pct > 0.8 and trend_strength == "weak":
+                    # Weak upcycle with some profit - consider exiting
+                    opportunities.append(TradeOpportunity(
+                        type="initial_exit",
+                        from_asset="ETH",
+                        to_asset="EUR",
+                        expected_return=profit_pct / 100,
+                        confidence=0.60,
+                        reasoning=f"Initial exit opportunity: Weak upcycle with {profit_pct:.2f}% profit - consider exit. Trend: {trend_summary}",
+                        market_conditions={
+                            "trend": trend_direction,
+                            "trend_strength": trend_strength,
+                            "profit_pct": profit_pct,
+                            "expected_eur": expected_eur,
+                            **trend_details
+                        }
+                    ))
+                    print(f"      🔍 Initial Exit Analysis: WEAK UPCYCLE - {profit_pct:.2f}% profit, exit opportunity")
+                    print(f"         Price changes: {trend_summary}")
+                else:
+                    # Upcycle in progress - wait for higher price
+                    print(f"      🔍 Initial Exit Analysis: UPCYCLE ({trend_strength}) ongoing - waiting for peak ({profit_pct:.2f}% profit)")
+                    print(f"         Price changes: {trend_summary}")
+
+            # If we found an initial exit opportunity, prioritize it and return
+            if opportunities:
+                return opportunities
+
+        # ========================================================================
+        # Continue with normal cycle-based exit detection
+        # ========================================================================
 
         # Check if this would be a good EUR exit (compared to watermark)
         eur_quality = "optimal"  # Default: good exit
@@ -922,9 +1115,9 @@ class GrokTrader:
                     return None
 
         if not self.api_key:
-            # Fallback: prioritize cycle signals
+            # Fallback: prioritize important signals
             for opp in opportunities:
-                if opp.type in ["cycle_exit", "cycle_entry"]:
+                if opp.type in ["initial_exit", "cycle_exit", "cycle_entry"]:
                     return opp
             return opportunities[0]
 
@@ -1023,6 +1216,7 @@ CRITICAL RULES:
 5. Respect the ETH watermark system - every ETH entry must beat the previous watermark
 6. EUR watermark is REFERENCE ONLY - prefer exits that match or exceed it, but can exit below if needed for safety
 7. If an exit opportunity shows EUR below 95% of watermark, it should have STRONG justification (3+ signals)
+8. INITIAL EXIT (first EUR exit): Consider historical trend analysis - if downcycle detected, exit immediately; if upcycle, wait for peak unless profit is already substantial
 
 STRATEGY:
 - ETH has STRICT watermark (must improve every entry)
@@ -1031,6 +1225,7 @@ STRATEGY:
 - Late bull/Euphoria: CONSERVATIVE (require large improvements)
 - Exit to EUR when multiple top signals present - try to time the peak
 - Re-enter ETH when cycle bottoms and beats watermark
+- Initial exit strategy: Use 6-hour historical trend analysis to optimize exit timing (downcycle=exit now, upcycle=wait for peak)
 
 Respond with JSON:
 {{
@@ -1115,6 +1310,9 @@ class ETHEURBot:
         self.market_hours = MarketHoursDetector()
         self.market = KrakenMarketProvider()
         self.opportunity_detector = ETHEUROpportunityDetector(config)
+
+        # Connect market provider to opportunity detector for trend analysis
+        self.opportunity_detector.market_provider = self.market
 
         # Pass get_recent_trades method to GrokTrader for context
         self.ai = GrokTrader(config.grok_api_key, config, get_recent_trades_fn=self.get_recent_trades)
