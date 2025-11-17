@@ -787,22 +787,27 @@ class ETHEUROpportunityDetector:
                                      cycle_phase: str) -> List[TradeOpportunity]:
         """Check if current ETH position beats watermark (shouldn't happen)"""
         opportunities = []
-        
+
         # This is a safety check - we shouldn't be in ETH without beating watermark
         current_eth = portfolio_value / market["ETH"].bid
-        
-        if current_eth <= watermark:
-            # We're below watermark - should exit to EUR and wait
+
+        # Only trigger if we're SIGNIFICANTLY below watermark (>0.5% below)
+        # Small deviations (<0.5%) are normal due to bid/ask spread and price fluctuations
+        watermark_ratio = current_eth / watermark if watermark > 0 else 1.0
+
+        if watermark_ratio < 0.995:  # More than 0.5% below watermark
+            # We're significantly below watermark - something went wrong
+            deficit_pct = (1 - watermark_ratio) * 100
             opportunities.append(TradeOpportunity(
                 type="safety_exit",
                 from_asset="ETH",
                 to_asset="EUR",
                 expected_return=0.01,
                 confidence=0.95,
-                reasoning=f"Below watermark - exit and wait for better entry",
-                market_conditions={"cycle_phase": cycle_phase}
+                reasoning=f"Significantly below watermark ({deficit_pct:.1f}% deficit) - exit and wait for better entry",
+                market_conditions={"cycle_phase": cycle_phase, "watermark_deficit": deficit_pct}
             ))
-        
+
         return opportunities
 
 # ==============================================================================
@@ -842,15 +847,17 @@ class GrokTrader:
                 minutes_since_last_trade = (now - last_trade_time).total_seconds() / 60
 
                 # CRITICAL: Minimum time buffer between trades (5 minutes)
-                # Only allow trades within 5 minutes if it's a critical safety exit
+                # NO EXCEPTIONS - all trades must wait
                 if minutes_since_last_trade < 5.0:
-                    # Check if any opportunity is a critical safety trade
-                    is_critical = any(opp.type == "safety_exit" for opp in opportunities)
+                    print(f"      ⏸️ TRADE COOLDOWN: Last trade {minutes_since_last_trade:.1f} min ago (min: 5 min)")
+                    print(f"         Last trade: {recent_trades[0]['from_asset']}→{recent_trades[0]['to_asset']}")
 
-                    if not is_critical:
-                        print(f"      ⏸️ TRADE COOLDOWN: Last trade {minutes_since_last_trade:.1f} min ago (min: 5 min)")
-                        print(f"         Last trade: {recent_trades[0]['from_asset']}→{recent_trades[0]['to_asset']}")
-                        return None
+                    # Show what opportunities were blocked
+                    if opportunities:
+                        blocked_types = [opp.type for opp in opportunities[:3]]
+                        print(f"         Blocked: {', '.join(blocked_types)}")
+
+                    return None
 
         if not self.api_key:
             # Fallback: prioritize cycle signals
