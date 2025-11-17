@@ -345,21 +345,39 @@ class IMessageNotifier:
 
 @dataclass
 class Watermark:
-    """Track ETH watermark only"""
+    """Track ETH watermark (strict) and EUR watermark (reference only)"""
     eth_quantity: float = 0.0
     eth_achieved_at: Optional[str] = None
-    
-    def update(self, quantity: float) -> bool:
-        """Update watermark if new quantity is higher"""
+    eur_quantity: float = 0.0
+    eur_achieved_at: Optional[str] = None
+
+    def update_eth(self, quantity: float) -> bool:
+        """Update ETH watermark if new quantity is higher (strict enforcement)"""
         if quantity > self.eth_quantity:
             self.eth_quantity = quantity
             self.eth_achieved_at = datetime.now().isoformat()
             return True
         return False
-    
+
+    def update_eur(self, quantity: float) -> bool:
+        """Update EUR watermark if new quantity is higher (reference only, not enforced)"""
+        if quantity > self.eur_quantity:
+            self.eur_quantity = quantity
+            self.eur_achieved_at = datetime.now().isoformat()
+            return True
+        return False
+
+    def update(self, quantity: float) -> bool:
+        """Backward compatibility - update ETH watermark"""
+        return self.update_eth(quantity)
+
     def get(self) -> float:
         """Get current ETH watermark"""
         return self.eth_quantity
+
+    def get_eur(self) -> float:
+        """Get current EUR watermark (reference only)"""
+        return self.eur_quantity
 
 @dataclass
 class Position:
@@ -604,32 +622,35 @@ class ETHEUROpportunityDetector:
     def detect_opportunities(self, state: Dict, market_info: Dict) -> List[TradeOpportunity]:
         """Detect trading opportunities"""
         opportunities = []
-        
+
         current_asset = state["current_position"]
         market = state["market"]
         watermark = state["watermark"]
+        eur_watermark = state.get("eur_watermark", 0)
         portfolio_value = state["portfolio_value"]
         profit_pct = state.get("profit_pct", 0)
         btc_price = market["BTC"].price
         eth_price = market["ETH"].price
-        
+
         # Get cycle-adjusted minimum improvement
         min_improvement = self.cycle_analyzer.get_minimum_improvement(btc_price, market_info)
         cycle_phase = self.cycle_analyzer.get_cycle_phase(btc_price)
-        
+
         print(f"      📊 Cycle: {cycle_phase} | Min improvement: {min_improvement*100:.3f}%")
-        
+        if eur_watermark > 0:
+            print(f"      💶 EUR Watermark: €{eur_watermark:,.2f} (reference only)")
+
         if current_asset == "EUR":
             # Look for ETH re-entry opportunities
             reentry_ops = self._detect_eth_reentry(
                 market, watermark, portfolio_value, min_improvement
             )
             opportunities.extend(reentry_ops)
-        
+
         elif current_asset == "ETH":
             # Check for EUR exit signals
             exit_ops = self._detect_eur_exit(
-                market, profit_pct, btc_price, eth_price
+                market, profit_pct, btc_price, eth_price, portfolio_value, eur_watermark
             )
             opportunities.extend(exit_ops)
             
@@ -644,32 +665,70 @@ class ETHEUROpportunityDetector:
         
         return opportunities
     
-    def _detect_eur_exit(self, market: Dict, profit_pct: float, 
-                        btc_price: float, eth_price: float) -> List[TradeOpportunity]:
-        """Detect opportunities to exit to EUR"""
+    def _detect_eur_exit(self, market: Dict, profit_pct: float,
+                        btc_price: float, eth_price: float, portfolio_value: float,
+                        eur_watermark: float) -> List[TradeOpportunity]:
+        """Detect opportunities to exit to EUR (with EUR watermark consideration)"""
         opportunities = []
-        
+
         eth_data = market["ETH"]
-        
+
+        # Calculate what EUR value we'd get after exit
+        expected_eur = portfolio_value * (1 - self.config.fee_rate)
+
+        # Check if this would be a good EUR exit (compared to watermark)
+        eur_quality = "optimal"  # Default: good exit
+        if eur_watermark > 0:
+            eur_ratio = expected_eur / eur_watermark
+            if eur_ratio < 0.95:  # More than 5% below watermark
+                eur_quality = "poor"
+            elif eur_ratio < 0.98:  # Within 2-5% of watermark
+                eur_quality = "suboptimal"
+
         # Check cycle-based exit signals
         should_exit, reasoning = self.cycle_analyzer.should_exit_to_eur(
             btc_price, eth_price, profit_pct, eth_data.rsi_estimate
         )
-        
+
+        # Adjust confidence based on EUR quality
+        confidence = 0.8
+        signal_count = len(reasoning.split(',')) if reasoning else 0
+
+        if eur_quality == "poor":
+            # Poor exit - need 3+ signals AND strong justification
+            if signal_count < 3:
+                should_exit = False  # Not enough signals for poor exit
+                reasoning = f"Exit signal present but EUR value (€{expected_eur:,.2f}) is {(1-expected_eur/eur_watermark)*100:.1f}% below watermark (€{eur_watermark:,.2f}) - need stronger signals"
+            else:
+                confidence = 0.6
+                reasoning += f" (Warning: EUR {(1-expected_eur/eur_watermark)*100:.1f}% below watermark)"
+
+        elif eur_quality == "suboptimal":
+            # Suboptimal exit - slightly lower confidence
+            confidence = 0.7
+            reasoning += f" (EUR within {(1-expected_eur/eur_watermark)*100:.1f}% of watermark)"
+
+        else:
+            # Optimal exit - matches or exceeds watermark
+            if eur_watermark > 0 and expected_eur > eur_watermark:
+                reasoning += f" (New EUR high: +{(expected_eur/eur_watermark-1)*100:.1f}%)"
+
         if should_exit:
             opportunities.append(TradeOpportunity(
                 type="cycle_exit",
                 from_asset="ETH",
                 to_asset="EUR",
                 expected_return=0.05,
-                confidence=0.8,
+                confidence=confidence,
                 reasoning=f"Cycle exit: {reasoning}",
                 market_conditions={
                     "cycle_phase": self.cycle_analyzer.get_cycle_phase(btc_price),
-                    "profit_pct": profit_pct
+                    "profit_pct": profit_pct,
+                    "eur_quality": eur_quality,
+                    "expected_eur": expected_eur
                 }
             ))
-        
+
         return opportunities
     
     def _detect_eth_reentry(self, market: Dict, watermark: float,
@@ -818,6 +877,7 @@ class GrokTrader:
             "portfolio_value": state["portfolio_value"],
             "profit_pct": state.get("profit_pct", 0),
             "eth_watermark": state.get("watermark", 0),
+            "eur_watermark": state.get("eur_watermark", 0),
             "cycle_phase": cycle_phase,
             "btc_price": btc_price,
             "eth_price": state["market"]["ETH"].price,
@@ -858,11 +918,15 @@ class GrokTrader:
 
         time_since_text = f"{minutes_since_last_trade:.1f} minutes ago" if minutes_since_last_trade else "No trades yet"
 
+        eur_watermark = state.get("eur_watermark", 0)
+        eur_watermark_text = f"EUR WATERMARK: €{eur_watermark:,.2f} (reference only - aim to match or exceed)" if eur_watermark > 0 else "EUR WATERMARK: Not set yet"
+
         system_prompt = f"""You are Grok, trading ETH/EUR with cycle awareness.
 
 CURRENT CYCLE: {cycle_phase}
 BTC PRICE: €{btc_price:,.0f} (market indicator)
-ETH WATERMARK: {state.get("watermark", 0):.6f}
+ETH WATERMARK: {state.get("watermark", 0):.6f} (STRICT - must beat on every entry)
+{eur_watermark_text}
 
 TRADE HISTORY (last {len(recent_trades)} trades):
 {trade_history_text}
@@ -874,13 +938,16 @@ CRITICAL RULES:
 2. If we just entered ETH, DO NOT immediately exit unless there's a critical risk (>3% drop, extreme overbought)
 3. If we just exited to EUR, DO NOT immediately re-enter unless RSI shows extreme oversold (<20) AND significant price improvement
 4. Consider the reasoning of recent trades - don't repeat failed strategies
-5. Respect the watermark system - every ETH entry must beat the previous watermark
+5. Respect the ETH watermark system - every ETH entry must beat the previous watermark
+6. EUR watermark is REFERENCE ONLY - prefer exits that match or exceed it, but can exit below if needed for safety
+7. If an exit opportunity shows EUR below 95% of watermark, it should have STRONG justification (3+ signals)
 
 STRATEGY:
-- Only trade ETH (with watermark) and EUR (no watermark)
+- ETH has STRICT watermark (must improve every entry)
+- EUR has SOFT watermark (reference only - aim to match peaks but don't get trapped)
 - Accumulation phase: AGGRESSIVE (accept small improvements)
 - Late bull/Euphoria: CONSERVATIVE (require large improvements)
-- Exit to EUR when multiple top signals present
+- Exit to EUR when multiple top signals present - try to time the peak
 - Re-enter ETH when cycle bottoms and beats watermark
 
 Respond with JSON:
@@ -947,11 +1014,16 @@ class ETHEURBot:
         self.current_position: Optional[Position] = None
         self.watermark = Watermark()
         self.initial_value = 0
-        
+
         # Tracking
         self.total_trades = 0
         self.successful_trades = 0
         self.total_fees = 0
+
+        # Exit patience tracking
+        self.exit_signal_first_seen: Optional[str] = None  # Timestamp of first exit signal
+        self.exit_signal_count: int = 0  # How many iterations we've seen exit signal
+        self.last_eth_price_at_signal: Optional[float] = None  # ETH price when signal first appeared
 
         # Database - must be initialized before creating AI trader
         self.db_name = f"eth_eur_{config.bot_name.lower()}.db"
@@ -1114,16 +1186,26 @@ class ETHEURBot:
             entry_time=datetime.now().isoformat()
         )
         
-        # Update watermark if ETH
+        # Update watermarks
         improvement = 0
         watermark_updated = False
+        eur_watermark_updated = False
+
         if to_asset == "ETH":
+            # Update ETH watermark (strict enforcement)
             old_watermark = self.watermark.get()
-            watermark_updated = self.watermark.update(new_qty)
+            watermark_updated = self.watermark.update_eth(new_qty)
             if watermark_updated:
                 self.successful_trades += 1
                 improvement = (new_qty / old_watermark - 1) if old_watermark > 0 else 1.0
-        
+        elif to_asset == "EUR":
+            # Update EUR watermark (reference only, not enforced)
+            eur_watermark_updated = self.watermark.update_eur(new_qty)
+            # Reset exit patience tracking after successful EUR exit
+            self.exit_signal_first_seen = None
+            self.exit_signal_count = 0
+            self.last_eth_price_at_signal = None
+
         self.total_trades += 1
         self.total_fees += fee
         
@@ -1147,10 +1229,19 @@ class ETHEURBot:
         
         if to_asset == "EUR":
             print(f"      New Position: €{new_qty:,.2f}")
+            if eur_watermark_updated:
+                old_eur = self.watermark.get_eur() / (new_qty / (self.watermark.get_eur() if self.watermark.get_eur() > 0 else new_qty))
+                print(f"      💶 NEW EUR WATERMARK: €{new_qty:,.2f} (reference only)")
+            elif self.watermark.get_eur() > 0:
+                eur_ratio = new_qty / self.watermark.get_eur()
+                if eur_ratio >= 0.98:
+                    print(f"      💶 EUR: {eur_ratio*100:.1f}% of watermark (€{self.watermark.get_eur():,.2f})")
+                else:
+                    print(f"      ⚠️ EUR: {eur_ratio*100:.1f}% of watermark (€{self.watermark.get_eur():,.2f})")
         else:
             print(f"      New Position: {new_qty:.6f} ETH @ €{new_price:,.2f}")
             if watermark_updated:
-                print(f"      🏔️ NEW WATERMARK: {new_qty:.6f} ETH (+{improvement*100:.3f}%)")
+                print(f"      🏔️ NEW ETH WATERMARK: {new_qty:.6f} ETH (+{improvement*100:.3f}%)")
         
         print(f"      Reason: {opportunity.reasoning}")
         
@@ -1206,8 +1297,11 @@ class ETHEURBot:
         else:
             print(f"   {self.current_position.quantity:.6f} ETH @ €{eth_price:,.2f}")
         
-        print(f"\n🏔️ ETH WATERMARK: {self.watermark.get():.6f}")
-        
+        print(f"\n🏔️ WATERMARKS:")
+        print(f"   ETH: {self.watermark.get():.6f} (strict)")
+        if self.watermark.get_eur() > 0:
+            print(f"   EUR: €{self.watermark.get_eur():,.2f} (reference only)")
+
         print(f"\n📈 MARKET:")
         eth_data = market["ETH"]
         print(f"   ETH: €{eth_price:,.2f}")
@@ -1222,6 +1316,7 @@ class ETHEURBot:
             "portfolio_value": portfolio_value,
             "profit_pct": profit_pct,
             "watermark": self.watermark.get(),
+            "eur_watermark": self.watermark.get_eur(),
             "market": market
         }
         
