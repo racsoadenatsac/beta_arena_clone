@@ -794,7 +794,7 @@ class ETHEUROpportunityDetector:
         elif current_asset == "ETH":
             # Check for EUR exit signals
             exit_ops = self._detect_eur_exit(
-                market, profit_pct, btc_price, eth_price, portfolio_value, eur_watermark
+                market, profit_pct, btc_price, eth_price, portfolio_value, eur_watermark, market_info
             )
             opportunities.extend(exit_ops)
             
@@ -811,7 +811,7 @@ class ETHEUROpportunityDetector:
     
     def _detect_eur_exit(self, market: Dict, profit_pct: float,
                         btc_price: float, eth_price: float, portfolio_value: float,
-                        eur_watermark: float) -> List[TradeOpportunity]:
+                        eur_watermark: float, market_info: Dict) -> List[TradeOpportunity]:
         """Detect opportunities to exit to EUR (with EUR watermark consideration)"""
         opportunities = []
 
@@ -823,7 +823,12 @@ class ETHEUROpportunityDetector:
         # ========================================================================
         # SPECIAL CASE: Initial exit from starting position (EUR watermark = 0)
         # ========================================================================
-        if eur_watermark == 0 and profit_pct > 0.3:
+        # During markets closed hours, just recouping the fee is enough
+        # During markets open hours, require a bit more profit (0.3%)
+        markets_closed = not market_info.get("is_major_market_open", False)
+        min_profit_threshold = self.config.fee_rate * 100 if markets_closed else 0.3
+
+        if eur_watermark == 0 and profit_pct > min_profit_threshold:
             # We have some profit and haven't exited yet - analyze historical trend
             trend_direction, trend_strength, trend_details = self._analyze_historical_trend(market)
 
@@ -834,6 +839,7 @@ class ETHEUROpportunityDetector:
             momentum_30m = trend_details.get("momentum_30m", 0)
 
             trend_summary = f"1h: {change_1h:+.2f}%, 3h: {change_3h:+.2f}%, 6h: {change_6h:+.2f}%"
+            market_hours_note = " (markets closed)" if markets_closed else ""
 
             if trend_direction == "downcycle":
                 # Downcycle detected - exit immediately to lock in profit
@@ -843,44 +849,57 @@ class ETHEUROpportunityDetector:
                     to_asset="EUR",
                     expected_return=profit_pct / 100,
                     confidence=0.85,
-                    reasoning=f"Initial exit: Downcycle detected ({trend_strength}) - lock in {profit_pct:.2f}% profit. Trend: {trend_summary}",
+                    reasoning=f"Initial exit: Downcycle detected ({trend_strength}) - lock in {profit_pct:.2f}% profit{market_hours_note}. Trend: {trend_summary}",
                     market_conditions={
                         "trend": trend_direction,
                         "trend_strength": trend_strength,
                         "profit_pct": profit_pct,
                         "expected_eur": expected_eur,
+                        "markets_closed": markets_closed,
                         **trend_details
                     }
                 ))
-                print(f"      🔍 Initial Exit Analysis: DOWNCYCLE ({trend_strength}) - Exit recommended")
+                print(f"      🔍 Initial Exit Analysis: DOWNCYCLE ({trend_strength}) - Exit recommended{market_hours_note}")
                 print(f"         Price changes: {trend_summary}")
+                if markets_closed:
+                    print(f"         Fee recouped: {profit_pct:.2f}% > {self.config.fee_rate*100:.2f}%")
 
             elif trend_direction == "sideways" or trend_strength == "weak":
                 # Sideways or weak trend - if we have decent profit, consider exiting
-                if profit_pct > 1.0:
+                # During markets closed, lower threshold to 0.5%; during open, keep 1.0%
+                sideways_threshold = 0.5 if markets_closed else 1.0
+
+                if profit_pct > sideways_threshold:
                     opportunities.append(TradeOpportunity(
                         type="initial_exit",
                         from_asset="ETH",
                         to_asset="EUR",
                         expected_return=profit_pct / 100,
                         confidence=0.75,
-                        reasoning=f"Initial exit: Sideways/weak trend with {profit_pct:.2f}% profit - lock in gains. Trend: {trend_summary}",
+                        reasoning=f"Initial exit: Sideways/weak trend with {profit_pct:.2f}% profit{market_hours_note} - lock in gains. Trend: {trend_summary}",
                         market_conditions={
                             "trend": trend_direction,
                             "trend_strength": trend_strength,
                             "profit_pct": profit_pct,
                             "expected_eur": expected_eur,
+                            "markets_closed": markets_closed,
                             **trend_details
                         }
                     ))
-                    print(f"      🔍 Initial Exit Analysis: {trend_direction.upper()} ({trend_strength}) with {profit_pct:.2f}% profit")
+                    print(f"      🔍 Initial Exit Analysis: {trend_direction.upper()} ({trend_strength}) with {profit_pct:.2f}% profit{market_hours_note}")
                     print(f"         Price changes: {trend_summary}")
+                    if markets_closed:
+                        print(f"         Fee recouped: {profit_pct:.2f}% > {self.config.fee_rate*100:.2f}%")
                 else:
-                    print(f"      🔍 Initial Exit Analysis: {trend_direction.upper()} ({trend_strength}) - waiting for better profit ({profit_pct:.2f}%)")
+                    print(f"      🔍 Initial Exit Analysis: {trend_direction.upper()} ({trend_strength}) - waiting for better profit ({profit_pct:.2f}%{market_hours_note})")
 
             elif trend_direction == "upcycle":
                 # Upcycle detected - wait for better price, but create opportunity for Grok to decide
-                if profit_pct > 1.5:
+                # During markets closed, lower thresholds (1.0% instead of 1.5%, 0.5% instead of 0.8%)
+                upcycle_high_threshold = 1.0 if markets_closed else 1.5
+                upcycle_weak_threshold = 0.5 if markets_closed else 0.8
+
+                if profit_pct > upcycle_high_threshold:
                     # Good profit already - let Grok decide if it's time
                     opportunities.append(TradeOpportunity(
                         type="initial_exit",
@@ -888,18 +907,21 @@ class ETHEUROpportunityDetector:
                         to_asset="EUR",
                         expected_return=profit_pct / 100,
                         confidence=0.65,
-                        reasoning=f"Initial exit opportunity: Upcycle ({trend_strength}) with {profit_pct:.2f}% profit - Grok to decide timing. Trend: {trend_summary}",
+                        reasoning=f"Initial exit opportunity: Upcycle ({trend_strength}) with {profit_pct:.2f}% profit{market_hours_note} - Grok to decide timing. Trend: {trend_summary}",
                         market_conditions={
                             "trend": trend_direction,
                             "trend_strength": trend_strength,
                             "profit_pct": profit_pct,
                             "expected_eur": expected_eur,
+                            "markets_closed": markets_closed,
                             **trend_details
                         }
                     ))
-                    print(f"      🔍 Initial Exit Analysis: UPCYCLE ({trend_strength}) - {profit_pct:.2f}% profit, let Grok decide timing")
+                    print(f"      🔍 Initial Exit Analysis: UPCYCLE ({trend_strength}) - {profit_pct:.2f}% profit{market_hours_note}, let Grok decide timing")
                     print(f"         Price changes: {trend_summary}")
-                elif profit_pct > 0.8 and trend_strength == "weak":
+                    if markets_closed:
+                        print(f"         Fee recouped: {profit_pct:.2f}% > {self.config.fee_rate*100:.2f}%")
+                elif profit_pct > upcycle_weak_threshold and trend_strength == "weak":
                     # Weak upcycle with some profit - consider exiting
                     opportunities.append(TradeOpportunity(
                         type="initial_exit",
@@ -907,20 +929,23 @@ class ETHEUROpportunityDetector:
                         to_asset="EUR",
                         expected_return=profit_pct / 100,
                         confidence=0.60,
-                        reasoning=f"Initial exit opportunity: Weak upcycle with {profit_pct:.2f}% profit - consider exit. Trend: {trend_summary}",
+                        reasoning=f"Initial exit opportunity: Weak upcycle with {profit_pct:.2f}% profit{market_hours_note} - consider exit. Trend: {trend_summary}",
                         market_conditions={
                             "trend": trend_direction,
                             "trend_strength": trend_strength,
                             "profit_pct": profit_pct,
                             "expected_eur": expected_eur,
+                            "markets_closed": markets_closed,
                             **trend_details
                         }
                     ))
-                    print(f"      🔍 Initial Exit Analysis: WEAK UPCYCLE - {profit_pct:.2f}% profit, exit opportunity")
+                    print(f"      🔍 Initial Exit Analysis: WEAK UPCYCLE - {profit_pct:.2f}% profit{market_hours_note}, exit opportunity")
                     print(f"         Price changes: {trend_summary}")
+                    if markets_closed:
+                        print(f"         Fee recouped: {profit_pct:.2f}% > {self.config.fee_rate*100:.2f}%")
                 else:
                     # Upcycle in progress - wait for higher price
-                    print(f"      🔍 Initial Exit Analysis: UPCYCLE ({trend_strength}) ongoing - waiting for peak ({profit_pct:.2f}% profit)")
+                    print(f"      🔍 Initial Exit Analysis: UPCYCLE ({trend_strength}) ongoing - waiting for peak ({profit_pct:.2f}% profit{market_hours_note})")
                     print(f"         Price changes: {trend_summary}")
 
             # If we found an initial exit opportunity, prioritize it and return
@@ -1216,7 +1241,7 @@ CRITICAL RULES:
 5. Respect the ETH watermark system - every ETH entry must beat the previous watermark
 6. EUR watermark is REFERENCE ONLY - prefer exits that match or exceed it, but can exit below if needed for safety
 7. If an exit opportunity shows EUR below 95% of watermark, it should have STRONG justification (3+ signals)
-8. INITIAL EXIT (first EUR exit): Consider historical trend analysis - if downcycle detected, exit immediately; if upcycle, wait for peak unless profit is already substantial
+8. INITIAL EXIT (first EUR exit): Consider historical trend analysis - if downcycle detected, exit immediately; if upcycle, wait for peak unless profit is already substantial. During markets closed, lower profit thresholds apply (just need to recoup fee ~0.26%)
 
 STRATEGY:
 - ETH has STRICT watermark (must improve every entry)
@@ -1226,6 +1251,7 @@ STRATEGY:
 - Exit to EUR when multiple top signals present - try to time the peak
 - Re-enter ETH when cycle bottoms and beats watermark
 - Initial exit strategy: Use 6-hour historical trend analysis to optimize exit timing (downcycle=exit now, upcycle=wait for peak)
+- Markets closed: Lower profit thresholds for initial exit (fee recouped is enough ~0.26%)
 
 Respond with JSON:
 {{
