@@ -423,18 +423,20 @@ class TradeOpportunity:
 
 class KrakenMarketProvider:
     """Market data provider"""
-    
+
     def __init__(self):
         self.base_url = "https://api.kraken.com/0/public"
+        # Increase history size for 6 hours of 1-minute data
         self.price_history = {
-            "ETH": deque(maxlen=60),
-            "BTC": deque(maxlen=60)  # Track BTC for cycle analysis
+            "ETH": deque(maxlen=360),  # 6 hours * 60 minutes
+            "BTC": deque(maxlen=360)   # Track BTC for cycle analysis
         }
         self.last_prices = {"ETH": None, "BTC": None}
         self.five_min_history = {
             "ETH": deque(maxlen=5),
             "BTC": deque(maxlen=5)
         }
+        self.history_loaded = False
     
     def _estimate_rsi(self, prices: deque) -> Optional[float]:
         """Estimate RSI"""
@@ -461,9 +463,69 @@ class KrakenMarketProvider:
         
         rs = avg_gain / avg_loss
         rsi = 100 - (100 / (1 + rs))
-        
+
         return rsi
-    
+
+    def load_historical_data(self, hours: int = 6):
+        """Load historical OHLC data from Kraken to build price history"""
+        print(f"\n📊 Loading {hours}h historical market data from Kraken...")
+
+        pairs = {
+            "ETH": "ETHEUR",
+            "BTC": "XBTEUR"
+        }
+
+        for asset, pair in pairs.items():
+            try:
+                # Kraken OHLC endpoint - interval 1 = 1 minute
+                response = requests.get(
+                    f"{self.base_url}/OHLC",
+                    params={
+                        "pair": pair,
+                        "interval": 1  # 1-minute candles
+                    },
+                    timeout=30
+                )
+                response.raise_for_status()
+                data = response.json()
+
+                if data.get("error") and len(data["error"]) > 0:
+                    print(f"   ⚠️ Kraken error for {asset}: {data['error']}")
+                    continue
+
+                result = data.get("result", {})
+
+                # Get the OHLC data (key varies: XETHZEUR, XXBTZEUR, etc.)
+                ohlc_data = None
+                for key in result.keys():
+                    if key.startswith("X") or key == pair:
+                        ohlc_data = result[key]
+                        break
+
+                if not ohlc_data:
+                    print(f"   ⚠️ No OHLC data found for {asset}")
+                    continue
+
+                # OHLC format: [time, open, high, low, close, vwap, volume, count]
+                # We want closing prices from the last N hours
+                max_candles = hours * 60  # hours * 60 minutes
+                candles = ohlc_data[-max_candles:] if len(ohlc_data) > max_candles else ohlc_data
+
+                # Extract closing prices and add to history
+                for candle in candles:
+                    close_price = float(candle[4])  # Index 4 is close price
+                    self.price_history[asset].append(close_price)
+
+                print(f"   ✅ {asset}: Loaded {len(candles)} candles (last price: €{close_price:,.2f})")
+                self.last_prices[asset] = close_price
+
+            except Exception as e:
+                print(f"   ⚠️ Error loading {asset} history: {e}")
+                continue
+
+        self.history_loaded = True
+        print(f"   📈 Historical data loaded successfully\n")
+
     def fetch(self) -> Dict[str, MarketData]:
         """Get market data"""
         try:
@@ -1098,30 +1160,39 @@ class ETHEURBot:
     
     def initialize(self):
         """Initialize with ETH"""
-        print("\n🔄 Fetching initial market prices...")
+        # Load 6 hours of historical data from Kraken for better analysis
+        if not self.market.history_loaded:
+            self.market.load_historical_data(hours=6)
+
+        print("\n🔄 Fetching current market prices...")
         market = self.market.fetch()
-        
+
         eth_price = market["ETH"].price
         btc_price = market["BTC"].price
-        
+        eth_rsi = market["ETH"].rsi_estimate
+
         self.current_position = Position(
             symbol="ETH",
             quantity=self.config.initial_eth,
             entry_price=eth_price,
             entry_time=datetime.now().isoformat()
         )
-        
+
         self.watermark.update(self.config.initial_eth)
         self.initial_value = self.config.initial_eth * eth_price
-        
+
         cycle_analyzer = CyclePositionAnalyzer(self.config)
         cycle_phase = cycle_analyzer.get_cycle_phase(btc_price)
-        
+
         print(f"\n🚀 Bot Initialized")
         print(f"   Starting: {self.config.initial_eth} ETH @ €{eth_price:,.2f}")
         print(f"   Portfolio: €{self.initial_value:,.2f}")
         print(f"   Cycle Phase: {cycle_phase}")
         print(f"   BTC Price: €{btc_price:,.2f}")
+        if eth_rsi:
+            rsi_status = "Overbought" if eth_rsi > 70 else "Oversold" if eth_rsi < 30 else "Neutral"
+            print(f"   ETH RSI: ~{eth_rsi:.0f} ({rsi_status})")
+        print(f"   Price History: {len(self.market.price_history['ETH'])} data points loaded")
     
     def calculate_portfolio_value(self, market: Dict[str, MarketData]) -> float:
         """Calculate current portfolio value"""
