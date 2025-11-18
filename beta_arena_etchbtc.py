@@ -143,14 +143,14 @@ class CyclePositionAnalyzer:
         
         signals = []
         phase = self.get_cycle_phase(btc_price)
-        
-        # Signal 1: Late cycle with significant profit
-        if phase in ["late_bull", "euphoria"] and profit_pct > 30:
+
+        # Signal 1: Late cycle with decent profit
+        if phase in ["late_bull", "euphoria"] and profit_pct > 5:
             signals.append(f"Late cycle profit ({profit_pct:.1f}%)")
-        
+
         # Signal 2: ETH extremely overbought
         if eth_rsi and eth_rsi > self.config.extreme_overbought_rsi:
-            signals.append(f"ETH overbought (RSI {eth_rsi:.0f})")
+            signals.append(f"ETH overbought (RSI {eth_rsi:.0f}%)")
         
         # Signal 3: BTC above major resistance (market top signal)
         if btc_price > self.config.etf_cost_basis:
