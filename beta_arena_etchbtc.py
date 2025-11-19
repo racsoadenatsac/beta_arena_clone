@@ -12,6 +12,7 @@ Strategy:
 - STRICT watermark enforcement for ETH
 - Stop Loss: €5,000 max loss when in EUR - emergency buy back to ETH (safe position)
 - ETH is our home base, EUR is temporary for ladder trading
+- Newsletter Integration: Paste newsletters into newsletter.txt for Grok AI context
 """
 
 import requests
@@ -1184,12 +1185,13 @@ class ETHEUROpportunityDetector:
 class GrokTrader:
     """Grok AI trader for ETH/EUR decisions"""
 
-    def __init__(self, api_key: str, config: Config, get_recent_trades_fn=None):
+    def __init__(self, api_key: str, config: Config, get_recent_trades_fn=None, get_newsletters_fn=None):
         self.api_key = api_key
         self.config = config
         self.cycle_analyzer = CyclePositionAnalyzer(config)
         self.base_url = "https://api.x.ai/v1"
         self.get_recent_trades = get_recent_trades_fn
+        self.get_newsletters = get_newsletters_fn
     
     def evaluate_opportunities(self, opportunities: List[TradeOpportunity],
                               state: Dict, market_info: Dict) -> Optional[TradeOpportunity]:
@@ -1300,6 +1302,25 @@ class GrokTrader:
         eur_watermark = state.get("eur_watermark", 0)
         eur_watermark_text = f"EUR WATERMARK: €{eur_watermark:,.2f} (GOAL - aim to beat on every exit)" if eur_watermark > 0 else "EUR WATERMARK: Not set yet"
 
+        # Get recent newsletters
+        newsletters = []
+        newsletter_text = "No newsletters this week"
+        if self.get_newsletters:
+            newsletters = self.get_newsletters(7)  # Get last 7 days
+            if newsletters:
+                newsletter_parts = []
+                for nl in newsletters[:2]:  # Limit to 2 most recent
+                    week = nl.get("week_of", "Unknown")
+                    summary = nl.get("summary", "")
+                    content_preview = nl.get("content", "")[:500]  # First 500 chars
+
+                    if summary:
+                        newsletter_parts.append(f"   {week}: {summary}\n   Preview: {content_preview}...")
+                    else:
+                        newsletter_parts.append(f"   {week}:\n   {content_preview}...")
+
+                newsletter_text = "\n\n".join(newsletter_parts)
+
         # Market hours status
         open_markets = market_info.get("open_markets", [])
         if market_info.get("is_nyse_open"):
@@ -1321,6 +1342,11 @@ TRADE HISTORY (last {len(recent_trades)} trades):
 {trade_history_text}
 
 TIME SINCE LAST TRADE: {time_since_text}
+
+CRYPTO NEWSLETTERS (Recent insights from trusted sources):
+{newsletter_text}
+
+IMPORTANT: Consider newsletter insights about market trends, sentiment, on-chain metrics, and macro factors in your decision-making. These are expert analyses that may highlight risks or opportunities not visible in price action alone.
 
 YOUR ROLE:
 You are the SOLE decision maker. The system provides hints and context, but YOU decide whether to:
@@ -1450,8 +1476,13 @@ class ETHEURBot:
         # Connect market provider to opportunity detector for trend analysis
         self.opportunity_detector.market_provider = self.market
 
-        # Pass get_recent_trades method to GrokTrader for context
-        self.ai = GrokTrader(config.grok_api_key, config, get_recent_trades_fn=self.get_recent_trades)
+        # Pass get_recent_trades and get_newsletters methods to GrokTrader for context
+        self.ai = GrokTrader(
+            config.grok_api_key,
+            config,
+            get_recent_trades_fn=self.get_recent_trades,
+            get_newsletters_fn=self.get_recent_newsletters
+        )
         self.imessage = IMessageNotifier(config.imessage_recipient, config.bot_name) if config.enable_imessage else None
 
         self._print_header()
@@ -1466,7 +1497,8 @@ class ETHEURBot:
 ║  Starting: {self.config.initial_eth} ETH | Target: 2x Return                         ║
 ║  Stop Loss: €5,000 max loss (ETH = safe base, EUR = temporary)          ║
 ║  Cycle Indicators: BTC Price Levels                                      ║
-║  AI: Grok | Notifications: iMessage                                      ║
+║  AI: Grok + Newsletter Context | Notifications: iMessage                 ║
+║  📰 To add newsletter: Create newsletter.txt file during operation       ║
 ╚══════════════════════════════════════════════════════════════════════════╝""")
     
     def _init_db(self):
@@ -1503,9 +1535,85 @@ class ETHEURBot:
                 eth_price REAL
             )
         """)
-        
+
+        self.cursor.execute("""
+            CREATE TABLE IF NOT EXISTS newsletters (
+                id INTEGER PRIMARY KEY,
+                timestamp TEXT,
+                content TEXT,
+                week_of TEXT,
+                summary TEXT
+            )
+        """)
+
         self.conn.commit()
-    
+
+    def store_newsletter(self, content: str, week_of: str = None, summary: str = None):
+        """Store newsletter content in database"""
+        if not week_of:
+            week_of = datetime.now().strftime("%Y-W%U")  # Year-Week format
+
+        self.cursor.execute("""
+            INSERT INTO newsletters (timestamp, content, week_of, summary)
+            VALUES (?, ?, ?, ?)
+        """, (datetime.now().isoformat(), content, week_of, summary))
+        self.conn.commit()
+
+        print(f"\n   📰 Newsletter stored for {week_of}")
+        if summary:
+            print(f"      Summary: {summary}")
+
+    def get_recent_newsletters(self, days: int = 7) -> List[Dict]:
+        """Get newsletters from the last N days"""
+        cutoff_date = (datetime.now() - timedelta(days=days)).isoformat()
+
+        self.cursor.execute("""
+            SELECT timestamp, content, week_of, summary
+            FROM newsletters
+            WHERE timestamp >= ?
+            ORDER BY timestamp DESC
+        """, (cutoff_date,))
+
+        rows = self.cursor.fetchall()
+        newsletters = []
+        for row in rows:
+            newsletters.append({
+                "timestamp": row[0],
+                "content": row[1],
+                "week_of": row[2],
+                "summary": row[3]
+            })
+
+        return newsletters
+
+    def check_for_newsletter_input(self):
+        """Check if user wants to input a newsletter"""
+        newsletter_file = "newsletter.txt"
+
+        # Check if newsletter file exists
+        if os.path.exists(newsletter_file):
+            try:
+                with open(newsletter_file, 'r', encoding='utf-8') as f:
+                    content = f.read().strip()
+
+                if content:
+                    # Ask for optional summary
+                    summary = input("\n   📰 Newsletter found! Optional summary (press Enter to skip): ").strip()
+                    if not summary:
+                        summary = None
+
+                    self.store_newsletter(content, summary=summary)
+
+                # Delete the file after reading
+                os.remove(newsletter_file)
+
+                return True
+            except Exception as e:
+                print(f"   ⚠️ Error reading newsletter file: {e}")
+                return False
+
+        return False
+
     def initialize(self):
         """Initialize with ETH"""
         # Load 6 hours of historical data from Kraken for better analysis
@@ -1705,7 +1813,10 @@ class ETHEURBot:
     
     def run_iteration(self):
         """Run one trading iteration"""
-        
+
+        # Check for newsletter input
+        self.check_for_newsletter_input()
+
         market = self.market.fetch()
         market_info = self.market_hours.get_market_session_info()
         
@@ -1755,6 +1866,23 @@ class ETHEURBot:
         print(f"   ETH: {self.watermark.get():.6f} (strict)")
         if self.watermark.get_eur() > 0:
             print(f"   EUR: €{self.watermark.get_eur():,.2f} (reference only)")
+
+        # Show newsletter status
+        newsletters = self.get_recent_newsletters(7)
+        if newsletters:
+            print(f"\n📰 NEWSLETTERS:")
+            for nl in newsletters[:2]:  # Show up to 2 most recent
+                week = nl.get("week_of", "Unknown")
+                summary = nl.get("summary", "")
+                timestamp = nl.get("timestamp", "")
+                if summary:
+                    print(f"   {week}: {summary}")
+                else:
+                    # Show first 100 chars if no summary
+                    preview = nl.get("content", "")[:100]
+                    print(f"   {week}: {preview}...")
+        else:
+            print(f"\n📰 NEWSLETTERS: None (create newsletter.txt to add)")
 
         print(f"\n📈 MARKET:")
         eth_data = market["ETH"]
