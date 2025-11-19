@@ -1687,10 +1687,22 @@ class ETHEURBot:
         if opportunities:
             print(f"\n🤖 Grok Analysis...")
             selected = self.ai.evaluate_opportunities(opportunities, state, market_info)
-            
+
             if selected:
                 print(f"\n   ✅ SIGNAL: {selected.from_asset}→{selected.to_asset}")
-                self.execute_trade(selected, market)
+                print(f"      Type: {selected.type}")
+                print(f"      Reasoning: {selected.reasoning}")
+
+                # Ask user for confirmation
+                try:
+                    confirmation = input(f"\n   ❓ Execute this trade? (y/n): ").strip().lower()
+                    if confirmation in ['y', 'yes']:
+                        self.execute_trade(selected, market)
+                    else:
+                        print(f"   ⏸️ Trade cancelled by user")
+                except EOFError:
+                    # If running non-interactively, skip confirmation
+                    self.execute_trade(selected, market)
             else:
                 print(f"   ⏸️ HOLD")
         
