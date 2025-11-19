@@ -967,7 +967,8 @@ class ETHEUROpportunityDetector:
             }
         ))
         print(f"      🔍 Hold/Exit Analysis: {trend_direction.upper()} ({trend_strength}) - Profit: {profit_pct:+.2f}%{market_hours_note}")
-        print(f"         RSI: {rsi:.0f if rsi else 'N/A'} | EUR quality: {eur_quality}")
+        rsi_text = f"{rsi:.0f}" if rsi else "N/A"
+        print(f"         RSI: {rsi_text} | EUR quality: {eur_quality}")
         print(f"         Consulting Grok for decision...")
 
         return opportunities
