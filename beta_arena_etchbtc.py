@@ -398,6 +398,7 @@ class TradeOpportunity:
     confidence: float
     reasoning: str
     market_conditions: Dict
+    expected_quantity: Optional[float] = None  # Expected quantity of to_asset (e.g., ETH amount for EUR→ETH)
 
 # ==============================================================================
 # KRAKEN MARKET PROVIDER (Simplified for ETH and BTC tracking)
@@ -694,7 +695,8 @@ class ETHEUROpportunityDetector:
                 expected_return=0.10,
                 confidence=0.9,
                 reasoning="First ETH position",
-                market_conditions={"cycle_phase": self.cycle_analyzer.get_cycle_phase(btc_price)}
+                market_conditions={"cycle_phase": self.cycle_analyzer.get_cycle_phase(btc_price)},
+                expected_quantity=expected_qty
             ))
         else:
             # Need to beat watermark
@@ -718,7 +720,8 @@ class ETHEUROpportunityDetector:
                         market_conditions={
                             "cycle_phase": self.cycle_analyzer.get_cycle_phase(btc_price),
                             "improvement": improvement
-                        }
+                        },
+                        expected_quantity=expected_qty
                     ))
         
         return opportunities
@@ -1128,6 +1131,8 @@ class ETHEURBot:
             for i, opp in enumerate(opportunities[:2]):
                 print(f"   {i+1}. {opp.from_asset}→{opp.to_asset}: {opp.type}")
                 print(f"      Return: {opp.expected_return*100:.2f}% | Confidence: {opp.confidence:.0%}")
+                if opp.expected_quantity is not None and opp.to_asset == "ETH":
+                    print(f"      Expected ETH: {opp.expected_quantity:.6f} ETH")
                 print(f"      {opp.reasoning}")
         else:
             print(f"\n⏸️ No opportunities")
