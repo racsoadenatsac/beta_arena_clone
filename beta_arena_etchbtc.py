@@ -1693,15 +1693,26 @@ class ETHEURBot:
                 print(f"      Type: {selected.type}")
                 print(f"      Reasoning: {selected.reasoning}")
 
-                # Ask user for confirmation
+                # Ask user for confirmation with 25 second timeout
                 try:
-                    confirmation = input(f"\n   ❓ Execute this trade? (y/n): ").strip().lower()
-                    if confirmation in ['y', 'yes']:
-                        self.execute_trade(selected, market)
+                    import select
+                    print(f"\n   ❓ Execute this trade? (y/n, 25s timeout): ", end='', flush=True)
+
+                    # Wait for input with timeout
+                    ready, _, _ = select.select([sys.stdin], [], [], 25)
+
+                    if ready:
+                        confirmation = sys.stdin.readline().strip().lower()
+                        if confirmation in ['y', 'yes']:
+                            self.execute_trade(selected, market)
+                        else:
+                            print(f"   ⏸️ Trade cancelled by user")
                     else:
-                        print(f"   ⏸️ Trade cancelled by user")
-                except EOFError:
-                    # If running non-interactively, skip confirmation
+                        # Timeout - execute trade automatically
+                        print(f"\n   ⏰ No response in 25s - executing trade automatically")
+                        self.execute_trade(selected, market)
+                except (EOFError, ImportError):
+                    # If running non-interactively or select not available, execute trade
                     self.execute_trade(selected, market)
             else:
                 print(f"   ⏸️ HOLD")
