@@ -325,18 +325,22 @@ class IMessageNotifier:
         new_qty = trade_info.get("new_quantity", 0)
         new_price = trade_info.get("new_price", 0)
         reasoning = trade_info.get("reasoning", "")
-        
+        eth_price = trade_info.get("eth_price", 0)
+
         message = f"🔄 TRADE EXECUTED: {from_asset} → {to_asset}\n"
         message += f"      Type: {trade_type}\n"
         message += f"      Value: €{value:,.2f} | Fee: €{fee:.2f}\n"
-        
+
         if to_asset == "EUR":
-            message += f"      New Position: €{new_qty:,.2f}\n"
+            # Selling ETH to EUR: show EUR amount and its ETH equivalent
+            eth_equivalent = new_qty / eth_price if eth_price > 0 else 0
+            message += f"      New Position: €{new_qty:,.2f} ({eth_equivalent:.6f} ETH @ €{eth_price:,.2f})\n"
         else:
-            message += f"      New Position: {new_qty:.6f} {to_asset} @ €{new_price:,.2f}\n"
-        
+            # Buying ETH: show ETH amount and price
+            message += f"      New Position: {new_qty:.6f} ETH @ €{new_price:,.2f}\n"
+
         message += f"      Reason: {reasoning}"
-        
+
         return message
 
 # ==============================================================================
@@ -1063,7 +1067,8 @@ class ETHEURBot:
                 "fee": fee,
                 "new_quantity": new_qty,
                 "new_price": new_price,
-                "reasoning": opportunity.reasoning
+                "reasoning": opportunity.reasoning,
+                "eth_price": market["ETH"].price
             }
             self.imessage.send_trade_notification(trade_info)
         
