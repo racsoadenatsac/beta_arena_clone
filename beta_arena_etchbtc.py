@@ -10,6 +10,8 @@ Strategy:
 - Dynamic watermark requirements based on BTC price levels (as market indicator)
 - Strategic EUR exits/entries based on cycle position
 - STRICT watermark enforcement for ETH
+- Stop Loss: €5,000 max loss when in EUR - emergency buy back to ETH (safe position)
+- ETH is our home base, EUR is temporary for ladder trading
 """
 
 import requests
@@ -775,6 +777,8 @@ class ETHEUROpportunityDetector:
         profit_pct = state.get("profit_pct", 0)
         btc_price = market["BTC"].price
         eth_price = market["ETH"].price
+        eur_entry_value = state.get("eur_entry_value")
+        stop_loss_threshold = state.get("stop_loss_threshold", 5000.0)
 
         # Get cycle-adjusted minimum improvement
         min_improvement = self.cycle_analyzer.get_minimum_improvement(btc_price, market_info)
@@ -785,9 +789,10 @@ class ETHEUROpportunityDetector:
             print(f"      💶 EUR Watermark: €{eur_watermark:,.2f} (reference only)")
 
         if current_asset == "EUR":
-            # Look for ETH re-entry opportunities
+            # Look for ETH re-entry opportunities (including stop loss check)
             reentry_ops = self._detect_eth_reentry(
-                market, watermark, portfolio_value, min_improvement
+                market, watermark, portfolio_value, min_improvement,
+                eur_entry_value, stop_loss_threshold
             )
             opportunities.extend(reentry_ops)
 
@@ -999,13 +1004,48 @@ class ETHEUROpportunityDetector:
         return opportunities
     
     def _detect_eth_reentry(self, market: Dict, watermark: float,
-                           portfolio_value: float, min_improvement: float) -> List[TradeOpportunity]:
+                           portfolio_value: float, min_improvement: float,
+                           eur_entry_value: Optional[float] = None,
+                           stop_loss_threshold: float = 5000.0) -> List[TradeOpportunity]:
         """Detect ETH re-entry opportunities from EUR - ALWAYS consult Grok"""
         opportunities = []
 
         btc_price = market["BTC"].price
         eth_price = market["ETH"].price
         eth_rsi = market["ETH"].rsi_estimate
+
+        # ========================================================================
+        # CRITICAL: STOP LOSS CHECK - Highest priority
+        # ========================================================================
+        if eur_entry_value is not None:
+            current_loss = eur_entry_value - portfolio_value
+            if current_loss >= stop_loss_threshold:
+                # EMERGENCY: Stop loss triggered - buy back ETH immediately
+                value_after_fee = portfolio_value * (1 - self.config.fee_rate)
+                expected_qty = value_after_fee / market["ETH"].ask
+
+                print(f"      🚨 STOP LOSS TRIGGERED: Loss €{current_loss:,.2f} >= €{stop_loss_threshold:,.2f}")
+                print(f"         Emergency buy back to ETH (safe position)")
+
+                opportunities.append(TradeOpportunity(
+                    type="stop_loss",
+                    from_asset="EUR",
+                    to_asset="ETH",
+                    expected_return=-current_loss / eur_entry_value,  # Negative return (loss)
+                    confidence=0.99,  # Very high confidence - this is emergency
+                    reasoning=f"STOP LOSS: Portfolio down €{current_loss:,.2f} from EUR entry. Buying back ETH as safe position (ETH is our home base)",
+                    market_conditions={
+                        "stop_loss_triggered": True,
+                        "loss_eur": current_loss,
+                        "eur_entry_value": eur_entry_value,
+                        "current_value": portfolio_value,
+                        "expected_eth_qty": expected_qty,
+                        "eth_price": eth_price
+                    }
+                ))
+
+                # Return immediately - stop loss takes absolute priority
+                return opportunities
 
         # Check if we can beat watermark
         value_after_fee = portfolio_value * (1 - self.config.fee_rate)
@@ -1288,6 +1328,7 @@ You are the SOLE decision maker. The system provides hints and context, but YOU 
 - EXIT/ENTER: Set should_trade=true and select the opportunity
 
 OPPORTUNITY TYPES:
+- "stop_loss": EMERGENCY - Portfolio loss >= €5,000 when holding EUR. ALWAYS execute immediately to buy back ETH (our safe home base). ETH is where we want to be - EUR is just temporary for ladder trading.
 - "hold_or_exit": You're holding ETH - decide whether to exit to EUR or continue holding
 - "hold_or_enter": You're holding EUR - decide whether to enter ETH or continue waiting
 - "initial_exit": First exit from starting ETH position
@@ -1305,16 +1346,18 @@ WHEN HOLDING ETH (hold_or_exit):
 7. HOLD if: trend is upcycle - wait for peak before exiting
 
 WHEN HOLDING EUR (hold_or_enter):
-8. ENTER if: can beat ETH watermark AND (oversold RSI <30, or upcycle trend, or good entry signals)
-9. WAIT if: cannot beat ETH watermark yet - be patient for price to drop
-10. WAIT if: RSI is overbought (>75) even if can beat watermark - pullback likely
-11. If trend is downcycle, consider WAITING even longer for better entry price
-12. CRITICAL: If you cannot beat watermark, you MUST choose HOLD (should_trade=false)
+8. STOP LOSS OVERRIDE: If opportunity type is "stop_loss", ALWAYS execute immediately - no exceptions. This means we've lost €5,000+ and must return to our safe ETH position.
+9. ENTER if: can beat ETH watermark AND (oversold RSI <30, or upcycle trend, or good entry signals)
+10. WAIT if: cannot beat ETH watermark yet - be patient for price to drop
+11. WAIT if: RSI is overbought (>75) even if can beat watermark - pullback likely
+12. If trend is downcycle, consider WAITING even longer for better entry price
+13. CRITICAL: If you cannot beat watermark, you MUST choose HOLD (should_trade=false)
 
 CONSTRAINTS:
 - 5-minute minimum between trades (enforced by system)
-- ETH entries MUST beat ETH watermark (enforced by system)
+- ETH entries MUST beat ETH watermark (enforced by system, EXCEPT for stop_loss)
 - EUR exits SHOULD beat EUR watermark (goal - prioritize this)
+- STOP LOSS: €5,000 maximum loss when holding EUR - triggers emergency buy back to ETH
 
 Respond with JSON:
 {{
@@ -1386,6 +1429,10 @@ class ETHEURBot:
         self.successful_trades = 0
         self.total_fees = 0
 
+        # Stop loss tracking
+        self.eur_entry_value: Optional[float] = None  # EUR value when we first exit to EUR
+        self.stop_loss_threshold = 5000.0  # Maximum acceptable loss in EUR
+
         # Exit patience tracking
         self.exit_signal_first_seen: Optional[str] = None  # Timestamp of first exit signal
         self.exit_signal_count: int = 0  # How many iterations we've seen exit signal
@@ -1417,6 +1464,7 @@ class ETHEURBot:
 ╠══════════════════════════════════════════════════════════════════════════╣
 ║  Strategy: ETH Watermark + EUR Strategic Positioning                     ║
 ║  Starting: {self.config.initial_eth} ETH | Target: 2x Return                         ║
+║  Stop Loss: €5,000 max loss (ETH = safe base, EUR = temporary)          ║
 ║  Cycle Indicators: BTC Price Levels                                      ║
 ║  AI: Grok | Notifications: iMessage                                      ║
 ╚══════════════════════════════════════════════════════════════════════════╝""")
@@ -1550,9 +1598,10 @@ class ETHEURBot:
         else:  # ETH
             new_price = market["ETH"].ask
             new_qty = (old_value * (1 - self.config.fee_rate)) / new_price
-            
-            # CRITICAL: Never accept position below watermark
-            if self.watermark.get() > 0 and new_qty <= self.watermark.get():
+
+            # CRITICAL: Never accept position below watermark (EXCEPT for stop_loss emergency)
+            is_stop_loss = opportunity.type == "stop_loss"
+            if not is_stop_loss and self.watermark.get() > 0 and new_qty <= self.watermark.get():
                 print(f"\n   ❌ TRADE REJECTED: Would get {new_qty:.6f} ETH, below watermark {self.watermark.get():.6f}")
                 return False
         
@@ -1576,9 +1625,13 @@ class ETHEURBot:
             if watermark_updated:
                 self.successful_trades += 1
                 improvement = (new_qty / old_watermark - 1) if old_watermark > 0 else 1.0
+            # Reset EUR entry value when we buy back ETH
+            self.eur_entry_value = None
         elif to_asset == "EUR":
             # Update EUR watermark (reference only, not enforced)
             eur_watermark_updated = self.watermark.update_eur(new_qty)
+            # Track EUR entry value for stop loss calculation
+            self.eur_entry_value = new_qty
             # Reset exit patience tracking after successful EUR exit
             self.exit_signal_first_seen = None
             self.exit_signal_count = 0
@@ -1601,7 +1654,11 @@ class ETHEURBot:
         self.conn.commit()
         
         # Print trade info
-        print(f"\n   🔄 TRADE EXECUTED: {from_asset} → {to_asset}")
+        is_stop_loss = opportunity.type == "stop_loss"
+        trade_icon = "🚨" if is_stop_loss else "🔄"
+        trade_label = "STOP LOSS EXECUTED" if is_stop_loss else "TRADE EXECUTED"
+
+        print(f"\n   {trade_icon} {trade_label}: {from_asset} → {to_asset}")
         print(f"      Type: {opportunity.type}")
         print(f"      Value: €{old_value:,.2f} | Fee: €{fee:.2f}")
         
@@ -1620,6 +1677,13 @@ class ETHEURBot:
             print(f"      New Position: {new_qty:.6f} ETH @ €{new_price:,.2f}")
             if watermark_updated:
                 print(f"      🏔️ NEW ETH WATERMARK: {new_qty:.6f} ETH (+{improvement*100:.3f}%)")
+            elif is_stop_loss:
+                # Stop loss emergency - may be below watermark
+                if self.watermark.get() > 0:
+                    deficit = (1 - new_qty / self.watermark.get()) * 100
+                    print(f"      🚨 STOP LOSS: {new_qty:.6f} ETH ({deficit:.2f}% below watermark - emergency safety trade)")
+                else:
+                    print(f"      🚨 STOP LOSS: Emergency return to ETH (safe position)")
         
         print(f"      Reason: {opportunity.reasoning}")
         
@@ -1672,6 +1736,18 @@ class ETHEURBot:
         print(f"\n📍 POSITION: {self.current_position.symbol}")
         if self.current_position.symbol == "EUR":
             print(f"   €{self.current_position.quantity:,.2f}")
+            # Show stop loss status
+            if self.eur_entry_value is not None:
+                current_loss = self.eur_entry_value - portfolio_value
+                loss_pct = (current_loss / self.eur_entry_value) * 100 if self.eur_entry_value > 0 else 0
+                remaining_buffer = self.stop_loss_threshold - current_loss
+
+                if current_loss >= self.stop_loss_threshold:
+                    print(f"   🚨 STOP LOSS TRIGGERED: -€{current_loss:,.2f} ({loss_pct:.2f}%)")
+                elif remaining_buffer < 1000:
+                    print(f"   ⚠️ Stop Loss Warning: -€{current_loss:,.2f} ({loss_pct:.2f}%) | Buffer: €{remaining_buffer:,.2f}")
+                else:
+                    print(f"   🛡️ Stop Loss: -€{current_loss:,.2f} ({loss_pct:.2f}%) | Safe: €{remaining_buffer:,.2f} buffer")
         else:
             print(f"   {self.current_position.quantity:.6f} ETH @ €{eth_price:,.2f}")
         
@@ -1695,6 +1771,8 @@ class ETHEURBot:
             "profit_pct": profit_pct,
             "watermark": self.watermark.get(),
             "eur_watermark": self.watermark.get_eur(),
+            "eur_entry_value": self.eur_entry_value,
+            "stop_loss_threshold": self.stop_loss_threshold,
             "market": market
         }
         
