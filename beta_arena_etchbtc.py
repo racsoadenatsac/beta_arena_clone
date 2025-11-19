@@ -1476,7 +1476,7 @@ class ETHEURBot:
         if self.current_position.symbol == "EUR":
             return self.current_position.quantity
         else:  # ETH
-            return self.current_position.quantity * market["ETH"].bid
+            return self.current_position.quantity * market["ETH"].price
 
     def get_recent_trades(self, limit: int = 10) -> List[Dict]:
         """Get recent trades from database"""
