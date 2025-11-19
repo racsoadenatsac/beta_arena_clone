@@ -839,8 +839,18 @@ class ETHEUROpportunityDetector:
 
             trend_summary = f"1h: {change_1h:+.2f}%, 3h: {change_3h:+.2f}%, 6h: {change_6h:+.2f}%"
 
-            # Always create opportunity for Grok to evaluate
-            # Let AI decide based on full context: profit, trend, RSI, market conditions
+            # REQUIREMENT: First ETH->EUR trade must at least cover the trading fee
+            min_profit_for_initial = self.config.fee_rate * 100  # 0.26%
+
+            print(f"      🔍 Initial Exit Analysis: {trend_direction.upper()} ({trend_strength}) - Profit: {profit_pct:+.2f}%{market_hours_note}")
+            print(f"         Price changes: {trend_summary}")
+
+            if profit_pct < min_profit_for_initial:
+                # Not enough profit to cover fee - wait
+                print(f"         ⏳ Waiting for profit >= {min_profit_for_initial:.2f}% to cover fee (current: {profit_pct:+.2f}%)")
+                return opportunities  # Return empty - no opportunity yet
+
+            # Profit covers fee - create opportunity for Grok
             confidence = 0.5  # Neutral - let Grok decide
 
             # Adjust confidence hints based on conditions
@@ -850,11 +860,8 @@ class ETHEUROpportunityDetector:
             elif profit_pct > 1.0:
                 confidence = 0.7
                 hint = f"Decent profit ({profit_pct:.2f}%)"
-            elif profit_pct < -0.5:
-                confidence = 0.4
-                hint = f"Negative profit ({profit_pct:.2f}%)"
             else:
-                hint = f"Small profit ({profit_pct:.2f}%)"
+                hint = f"Profit covers fee ({profit_pct:.2f}%)"
 
             opportunities.append(TradeOpportunity(
                 type="initial_exit",
@@ -872,8 +879,6 @@ class ETHEUROpportunityDetector:
                     **trend_details
                 }
             ))
-            print(f"      🔍 Initial Exit Analysis: {trend_direction.upper()} ({trend_strength}) - Profit: {profit_pct:+.2f}%{market_hours_note}")
-            print(f"         Price changes: {trend_summary}")
             print(f"         Consulting Grok for decision...")
 
             return opportunities
@@ -892,18 +897,24 @@ class ETHEUROpportunityDetector:
 
         trend_summary = f"1h: {change_1h:+.2f}%, 3h: {change_3h:+.2f}%, 6h: {change_6h:+.2f}%"
 
-        # Check EUR quality (compared to watermark)
+        # Check EUR watermark status - this is a GOAL to beat (similar to ETH watermark)
         eur_quality = "optimal"
         eur_quality_note = ""
+        can_beat_eur_watermark = True
         if eur_watermark > 0:
             eur_ratio = expected_eur / eur_watermark
-            if eur_ratio < 0.95:
-                eur_quality = "poor"
-                eur_quality_note = f" EUR {(1-eur_ratio)*100:.1f}% below watermark"
-            elif eur_ratio < 0.98:
-                eur_quality = "suboptimal"
-                eur_quality_note = f" EUR {(1-eur_ratio)*100:.1f}% below watermark"
-            elif eur_ratio > 1.0:
+            if eur_ratio < 1.0:
+                can_beat_eur_watermark = False
+                if eur_ratio < 0.95:
+                    eur_quality = "poor"
+                    eur_quality_note = f" EUR {(1-eur_ratio)*100:.1f}% below watermark"
+                elif eur_ratio < 0.98:
+                    eur_quality = "suboptimal"
+                    eur_quality_note = f" EUR {(1-eur_ratio)*100:.1f}% below watermark"
+                else:
+                    eur_quality = "close"
+                    eur_quality_note = f" EUR {(1-eur_ratio)*100:.1f}% below watermark"
+            else:
                 eur_quality_note = f" New EUR high: +{(eur_ratio-1)*100:.1f}%"
 
         # Check cycle-based exit signals (for context/hints, not gates)
@@ -915,23 +926,32 @@ class ETHEUROpportunityDetector:
         hints = []
         confidence = 0.5  # Neutral - let Grok decide
 
+        # EUR watermark hints - IMPORTANT goal
+        if eur_watermark > 0:
+            if can_beat_eur_watermark:
+                hints.append(f"CAN beat EUR watermark (+{(eur_ratio-1)*100:.2f}%)")
+                confidence = min(confidence + 0.15, 0.8)
+            else:
+                hints.append(f"CANNOT beat EUR watermark (need {(1-eur_ratio)*100:.2f}% more)")
+                confidence = max(confidence - 0.2, 0.2)  # Lower confidence if can't beat
+
         # Trend hints
         if trend_direction == "downcycle":
             hints.append("Downcycle detected")
-            confidence = 0.6
+            confidence = min(confidence + 0.1, 0.8)
         elif trend_direction == "upcycle":
             hints.append("Upcycle detected")
-            confidence = 0.4
+            confidence = max(confidence - 0.1, 0.2)
 
         # RSI hints
         rsi = eth_data.rsi_estimate
         if rsi:
             if rsi > 75:
                 hints.append(f"Overbought RSI {rsi:.0f}")
-                confidence = min(confidence + 0.2, 0.8)
+                confidence = min(confidence + 0.15, 0.8)
             elif rsi < 25:
                 hints.append(f"Oversold RSI {rsi:.0f}")
-                confidence = max(confidence - 0.2, 0.2)
+                confidence = max(confidence - 0.15, 0.2)
 
         # Profit hints
         if profit_pct > 2.0:
@@ -960,6 +980,7 @@ class ETHEUROpportunityDetector:
                 "profit_pct": profit_pct,
                 "expected_eur": expected_eur,
                 "eur_quality": eur_quality,
+                "can_beat_eur_watermark": can_beat_eur_watermark,
                 "rsi": rsi,
                 "markets_closed": markets_closed,
                 "exit_signals": exit_signals,
@@ -968,7 +989,11 @@ class ETHEUROpportunityDetector:
         ))
         print(f"      🔍 Hold/Exit Analysis: {trend_direction.upper()} ({trend_strength}) - Profit: {profit_pct:+.2f}%{market_hours_note}")
         rsi_text = f"{rsi:.0f}" if rsi else "N/A"
-        print(f"         RSI: {rsi_text} | EUR quality: {eur_quality}")
+        if eur_watermark > 0:
+            eur_wm_status = f"CAN beat (+{(eur_ratio-1)*100:.2f}%)" if can_beat_eur_watermark else f"CANNOT beat (need {(1-eur_ratio)*100:.2f}%)"
+        else:
+            eur_wm_status = "N/A"
+        print(f"         RSI: {rsi_text} | EUR Watermark: {eur_wm_status}")
         print(f"         Consulting Grok for decision...")
 
         return opportunities
@@ -1233,7 +1258,7 @@ class GrokTrader:
         time_since_text = f"{minutes_since_last_trade:.1f} minutes ago" if minutes_since_last_trade else "No trades yet"
 
         eur_watermark = state.get("eur_watermark", 0)
-        eur_watermark_text = f"EUR WATERMARK: €{eur_watermark:,.2f} (reference only - aim to match or exceed)" if eur_watermark > 0 else "EUR WATERMARK: Not set yet"
+        eur_watermark_text = f"EUR WATERMARK: €{eur_watermark:,.2f} (GOAL - aim to beat on every exit)" if eur_watermark > 0 else "EUR WATERMARK: Not set yet"
 
         # Market hours status
         open_markets = market_info.get("open_markets", [])
@@ -1273,22 +1298,23 @@ DECISION GUIDELINES:
 2. Be patient - frequent trading costs fees (0.26% each way)
 
 WHEN HOLDING ETH (hold_or_exit):
-3. HOLD if conditions are neutral or improving
-4. EXIT if: strong downcycle, overbought RSI (>80), or to lock in good profits (>2%)
-5. If RSI is oversold (<30), HOLD (recovery likely)
-6. If profit is negative but trend is upcycle, HOLD and wait for recovery
+3. AIM to beat EUR watermark on every exit - this is a key goal
+4. EXIT if: can beat EUR watermark AND (strong downcycle, overbought RSI >80, or good profits >2%)
+5. HOLD if: cannot beat EUR watermark yet - wait for better price (unless emergency)
+6. HOLD if: RSI is oversold (<30) - recovery likely, wait for better exit
+7. HOLD if: trend is upcycle - wait for peak before exiting
 
 WHEN HOLDING EUR (hold_or_enter):
-7. ENTER if: can beat watermark AND (oversold RSI <30, or upcycle trend, or good entry signals)
-8. WAIT if: cannot beat watermark yet - be patient for price to drop
-9. WAIT if: RSI is overbought (>75) even if can beat watermark - pullback likely
-10. If trend is downcycle, consider WAITING even longer for better entry price
-11. CRITICAL: If you cannot beat watermark, you MUST choose HOLD (should_trade=false)
+8. ENTER if: can beat ETH watermark AND (oversold RSI <30, or upcycle trend, or good entry signals)
+9. WAIT if: cannot beat ETH watermark yet - be patient for price to drop
+10. WAIT if: RSI is overbought (>75) even if can beat watermark - pullback likely
+11. If trend is downcycle, consider WAITING even longer for better entry price
+12. CRITICAL: If you cannot beat watermark, you MUST choose HOLD (should_trade=false)
 
 CONSTRAINTS:
 - 5-minute minimum between trades (enforced by system)
-- ETH entries MUST beat watermark (enforced by system)
-- EUR watermark is reference only - can exit below it if needed
+- ETH entries MUST beat ETH watermark (enforced by system)
+- EUR exits SHOULD beat EUR watermark (goal - prioritize this)
 
 Respond with JSON:
 {{
@@ -1583,7 +1609,7 @@ class ETHEURBot:
             print(f"      New Position: €{new_qty:,.2f}")
             if eur_watermark_updated:
                 old_eur = self.watermark.get_eur() / (new_qty / (self.watermark.get_eur() if self.watermark.get_eur() > 0 else new_qty))
-                print(f"      💶 NEW EUR WATERMARK: €{new_qty:,.2f} (reference only)")
+                print(f"      💶 NEW EUR WATERMARK: €{new_qty:,.2f}")
             elif self.watermark.get_eur() > 0:
                 eur_ratio = new_qty / self.watermark.get_eur()
                 if eur_ratio >= 0.98:
