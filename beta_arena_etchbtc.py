@@ -975,17 +975,17 @@ class ETHEUROpportunityDetector:
     
     def _detect_eth_reentry(self, market: Dict, watermark: float,
                            portfolio_value: float, min_improvement: float) -> List[TradeOpportunity]:
-        """Detect ETH re-entry opportunities from EUR"""
+        """Detect ETH re-entry opportunities from EUR - ALWAYS consult Grok"""
         opportunities = []
-        
+
         btc_price = market["BTC"].price
         eth_price = market["ETH"].price
         eth_rsi = market["ETH"].rsi_estimate
-        
+
         # Check if we can beat watermark
         value_after_fee = portfolio_value * (1 - self.config.fee_rate)
         expected_qty = value_after_fee / market["ETH"].ask
-        
+
         if watermark == 0:
             # First ETH position
             opportunities.append(TradeOpportunity(
@@ -998,30 +998,90 @@ class ETHEUROpportunityDetector:
                 market_conditions={"cycle_phase": self.cycle_analyzer.get_cycle_phase(btc_price)}
             ))
         else:
-            # Need to beat watermark
+            # ========================================================================
+            # ALWAYS consult Grok when holding EUR - let AI decide based on full context
+            # ========================================================================
+
+            # Calculate improvement vs watermark
             improvement = (expected_qty / watermark) - 1
             required_qty = watermark * (1 + min_improvement)
-            
-            if expected_qty > required_qty:
-                # Check cycle-based re-entry signals
-                should_reenter, reentry_reasoning = self.cycle_analyzer.should_reenter_eth(
-                    btc_price, eth_price, eth_rsi
-                )
-                
-                if should_reenter or improvement > min_improvement * 2:
-                    opportunities.append(TradeOpportunity(
-                        type="cycle_entry",
-                        from_asset="EUR",
-                        to_asset="ETH",
-                        expected_return=improvement,
-                        confidence=0.85,
-                        reasoning=f"Re-entry: {reentry_reasoning}, beats watermark by {improvement*100:.3f}%",
-                        market_conditions={
-                            "cycle_phase": self.cycle_analyzer.get_cycle_phase(btc_price),
-                            "improvement": improvement
-                        }
-                    ))
-        
+            can_beat_watermark = expected_qty > required_qty
+
+            # Analyze trend
+            trend_direction, trend_strength, trend_details = self._analyze_historical_trend(market)
+            change_1h = trend_details.get("change_1h", 0)
+            change_3h = trend_details.get("change_3h", 0)
+            change_6h = trend_details.get("change_6h", 0)
+            trend_summary = f"1h: {change_1h:+.2f}%, 3h: {change_3h:+.2f}%, 6h: {change_6h:+.2f}%"
+
+            # Check cycle-based re-entry signals (for context)
+            _, reentry_signals = self.cycle_analyzer.should_reenter_eth(
+                btc_price, eth_price, eth_rsi
+            )
+
+            # Build hints
+            hints = []
+            confidence = 0.5  # Neutral - let Grok decide
+
+            # Watermark status
+            if can_beat_watermark:
+                hints.append(f"Can beat watermark by {improvement*100:.2f}%")
+                confidence = 0.7
+            else:
+                deficit = (1 - expected_qty/watermark) * 100
+                hints.append(f"Cannot beat watermark (need {deficit:.2f}% more drop)")
+                confidence = 0.3
+
+            # Trend hints
+            if trend_direction == "downcycle":
+                hints.append("Downcycle - price may drop more")
+                confidence = max(confidence - 0.1, 0.2)
+            elif trend_direction == "upcycle":
+                hints.append("Upcycle - may miss opportunity")
+                confidence = min(confidence + 0.1, 0.8)
+
+            # RSI hints
+            if eth_rsi:
+                if eth_rsi < 25:
+                    hints.append(f"Oversold RSI {eth_rsi:.0f} - good entry")
+                    confidence = min(confidence + 0.15, 0.85)
+                elif eth_rsi > 75:
+                    hints.append(f"Overbought RSI {eth_rsi:.0f} - wait for pullback")
+                    confidence = max(confidence - 0.1, 0.2)
+
+            # Re-entry signals
+            if reentry_signals:
+                hints.append(f"Entry signals: {reentry_signals}")
+                confidence = min(confidence + 0.1, 0.85)
+
+            hint_text = ", ".join(hints) if hints else "No strong signals"
+
+            opportunities.append(TradeOpportunity(
+                type="hold_or_enter",
+                from_asset="EUR",
+                to_asset="ETH",
+                expected_return=improvement,
+                confidence=confidence,
+                reasoning=f"Hold/Enter decision: {hint_text}. Trend: {trend_summary}",
+                market_conditions={
+                    "trend": trend_direction,
+                    "trend_strength": trend_strength,
+                    "improvement": improvement,
+                    "can_beat_watermark": can_beat_watermark,
+                    "expected_qty": expected_qty,
+                    "required_qty": required_qty,
+                    "rsi": eth_rsi,
+                    "entry_signals": reentry_signals,
+                    **trend_details
+                }
+            ))
+
+            rsi_text = f"{eth_rsi:.0f}" if eth_rsi else "N/A"
+            watermark_status = f"CAN beat (+{improvement*100:.2f}%)" if can_beat_watermark else f"CANNOT beat (need {(1-expected_qty/watermark)*100:.2f}% drop)"
+            print(f"      🔍 Hold/Enter Analysis: {trend_direction.upper()} ({trend_strength})")
+            print(f"         RSI: {rsi_text} | Watermark: {watermark_status}")
+            print(f"         Consulting Grok for decision...")
+
         return opportunities
     
     def _detect_watermark_improvement(self, market: Dict, watermark: float,
@@ -1204,18 +1264,26 @@ You are the SOLE decision maker. The system provides hints and context, but YOU 
 
 OPPORTUNITY TYPES:
 - "hold_or_exit": You're holding ETH - decide whether to exit to EUR or continue holding
+- "hold_or_enter": You're holding EUR - decide whether to enter ETH or continue waiting
 - "initial_exit": First exit from starting ETH position
 - "cycle_entry": Re-entering ETH from EUR (must beat watermark)
 
 DECISION GUIDELINES:
-1. Consider the full context: trend direction, RSI, profit/loss, market hours, EUR quality
-2. HOLD if conditions are neutral or improving - don't exit just because you can
-3. EXIT if you see deteriorating conditions: strong downcycle, overbought RSI (>80), or to lock in good profits (>2%)
-4. Be patient - frequent trading costs fees (0.26% each way)
-5. During late_bull/euphoria phases, be more willing to exit to protect gains
-6. If RSI is oversold (<30) while holding ETH, that's usually a HOLD signal (recovery likely)
-7. If profit is negative but trend is upcycle, HOLD and wait for recovery
-8. If profit is negative and trend is downcycle, consider EXIT to stop losses
+1. Consider the full context: trend direction, RSI, profit/loss, market hours, watermark status
+2. Be patient - frequent trading costs fees (0.26% each way)
+
+WHEN HOLDING ETH (hold_or_exit):
+3. HOLD if conditions are neutral or improving
+4. EXIT if: strong downcycle, overbought RSI (>80), or to lock in good profits (>2%)
+5. If RSI is oversold (<30), HOLD (recovery likely)
+6. If profit is negative but trend is upcycle, HOLD and wait for recovery
+
+WHEN HOLDING EUR (hold_or_enter):
+7. ENTER if: can beat watermark AND (oversold RSI <30, or upcycle trend, or good entry signals)
+8. WAIT if: cannot beat watermark yet - be patient for price to drop
+9. WAIT if: RSI is overbought (>75) even if can beat watermark - pullback likely
+10. If trend is downcycle, consider WAITING even longer for better entry price
+11. CRITICAL: If you cannot beat watermark, you MUST choose HOLD (should_trade=false)
 
 CONSTRAINTS:
 - 5-minute minimum between trades (enforced by system)
