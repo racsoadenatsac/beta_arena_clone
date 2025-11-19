@@ -328,18 +328,22 @@ class IMessageNotifier:
         new_qty = trade_info.get("new_quantity", 0)
         new_price = trade_info.get("new_price", 0)
         reasoning = trade_info.get("reasoning", "")
-        
+        eth_price = trade_info.get("eth_price", 0)
+
         message = f"🔄 TRADE EXECUTED: {from_asset} → {to_asset}\n"
         message += f"      Type: {trade_type}\n"
         message += f"      Value: €{value:,.2f} | Fee: €{fee:.2f}\n"
-        
+
         if to_asset == "EUR":
-            message += f"      New Position: €{new_qty:,.2f}\n"
+            # Selling ETH to EUR: show EUR amount and its ETH equivalent
+            eth_equivalent = new_qty / eth_price if eth_price > 0 else 0
+            message += f"      New Position: €{new_qty:,.2f} ({eth_equivalent:.6f} ETH @ €{eth_price:,.2f})\n"
         else:
-            message += f"      New Position: {new_qty:.6f} {to_asset} @ €{new_price:,.2f}\n"
-        
+            # Buying ETH: show ETH amount and price
+            message += f"      New Position: {new_qty:.6f} ETH @ €{new_price:,.2f}\n"
+
         message += f"      Reason: {reasoning}"
-        
+
         return message
 
 # ==============================================================================
@@ -419,6 +423,7 @@ class TradeOpportunity:
     confidence: float
     reasoning: str
     market_conditions: Dict
+    expected_quantity: Optional[float] = None  # Expected quantity of to_asset (e.g., ETH amount for EUR→ETH)
 
 # ==============================================================================
 # KRAKEN MARKET PROVIDER (Simplified for ETH and BTC tracking)
@@ -1042,7 +1047,8 @@ class ETHEUROpportunityDetector:
                         "current_value": portfolio_value,
                         "expected_eth_qty": expected_qty,
                         "eth_price": eth_price
-                    }
+                    },
+                    expected_quantity=expected_qty
                 ))
 
                 # Return immediately - stop loss takes absolute priority
@@ -1061,7 +1067,8 @@ class ETHEUROpportunityDetector:
                 expected_return=0.10,
                 confidence=0.9,
                 reasoning="First ETH position",
-                market_conditions={"cycle_phase": self.cycle_analyzer.get_cycle_phase(btc_price)}
+                market_conditions={"cycle_phase": self.cycle_analyzer.get_cycle_phase(btc_price)},
+                expected_quantity=expected_qty
             ))
         else:
             # ========================================================================
@@ -1139,7 +1146,8 @@ class ETHEUROpportunityDetector:
                     "rsi": eth_rsi,
                     "entry_signals": reentry_signals,
                     **trend_details
-                }
+                },
+                expected_quantity=expected_qty
             ))
 
             rsi_text = f"{eth_rsi:.0f}" if eth_rsi else "N/A"
@@ -1805,7 +1813,8 @@ class ETHEURBot:
                 "fee": fee,
                 "new_quantity": new_qty,
                 "new_price": new_price,
-                "reasoning": opportunity.reasoning
+                "reasoning": opportunity.reasoning,
+                "eth_price": market["ETH"].price
             }
             self.imessage.send_trade_notification(trade_info)
         
@@ -1911,6 +1920,8 @@ class ETHEURBot:
             for i, opp in enumerate(opportunities[:2]):
                 print(f"   {i+1}. {opp.from_asset}→{opp.to_asset}: {opp.type}")
                 print(f"      Return: {opp.expected_return*100:.2f}% | Confidence: {opp.confidence:.0%}")
+                if opp.expected_quantity is not None and opp.to_asset == "ETH":
+                    print(f"      Expected ETH: {opp.expected_quantity:.6f} ETH")
                 print(f"      {opp.reasoning}")
         else:
             print(f"\n⏸️ No opportunities")
