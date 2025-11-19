@@ -879,61 +879,96 @@ class ETHEUROpportunityDetector:
             return opportunities
 
         # ========================================================================
-        # Continue with normal cycle-based exit detection
+        # ALWAYS consult Grok when holding ETH - let AI decide based on full context
         # ========================================================================
 
-        # Check if this would be a good EUR exit (compared to watermark)
-        eur_quality = "optimal"  # Default: good exit
+        # Analyze historical trend for context
+        trend_direction, trend_strength, trend_details = self._analyze_historical_trend(market)
+
+        # Build reasoning based on trend analysis
+        change_1h = trend_details.get("change_1h", 0)
+        change_3h = trend_details.get("change_3h", 0)
+        change_6h = trend_details.get("change_6h", 0)
+
+        trend_summary = f"1h: {change_1h:+.2f}%, 3h: {change_3h:+.2f}%, 6h: {change_6h:+.2f}%"
+
+        # Check EUR quality (compared to watermark)
+        eur_quality = "optimal"
+        eur_quality_note = ""
         if eur_watermark > 0:
             eur_ratio = expected_eur / eur_watermark
-            if eur_ratio < 0.95:  # More than 5% below watermark
+            if eur_ratio < 0.95:
                 eur_quality = "poor"
-            elif eur_ratio < 0.98:  # Within 2-5% of watermark
+                eur_quality_note = f" EUR {(1-eur_ratio)*100:.1f}% below watermark"
+            elif eur_ratio < 0.98:
                 eur_quality = "suboptimal"
+                eur_quality_note = f" EUR {(1-eur_ratio)*100:.1f}% below watermark"
+            elif eur_ratio > 1.0:
+                eur_quality_note = f" New EUR high: +{(eur_ratio-1)*100:.1f}%"
 
-        # Check cycle-based exit signals
-        should_exit, reasoning = self.cycle_analyzer.should_exit_to_eur(
+        # Check cycle-based exit signals (for context/hints, not gates)
+        _, exit_signals = self.cycle_analyzer.should_exit_to_eur(
             btc_price, eth_price, profit_pct, eth_data.rsi_estimate
         )
 
-        # Adjust confidence based on EUR quality
-        confidence = 0.8
-        signal_count = len(reasoning.split(',')) if reasoning else 0
+        # Build hints based on conditions
+        hints = []
+        confidence = 0.5  # Neutral - let Grok decide
 
-        if eur_quality == "poor":
-            # Poor exit - need 3+ signals AND strong justification
-            if signal_count < 3:
-                should_exit = False  # Not enough signals for poor exit
-                reasoning = f"Exit signal present but EUR value (€{expected_eur:,.2f}) is {(1-expected_eur/eur_watermark)*100:.1f}% below watermark (€{eur_watermark:,.2f}) - need stronger signals"
-            else:
-                confidence = 0.6
-                reasoning += f" (Warning: EUR {(1-expected_eur/eur_watermark)*100:.1f}% below watermark)"
+        # Trend hints
+        if trend_direction == "downcycle":
+            hints.append("Downcycle detected")
+            confidence = 0.6
+        elif trend_direction == "upcycle":
+            hints.append("Upcycle detected")
+            confidence = 0.4
 
-        elif eur_quality == "suboptimal":
-            # Suboptimal exit - slightly lower confidence
-            confidence = 0.7
-            reasoning += f" (EUR within {(1-expected_eur/eur_watermark)*100:.1f}% of watermark)"
+        # RSI hints
+        rsi = eth_data.rsi_estimate
+        if rsi:
+            if rsi > 75:
+                hints.append(f"Overbought RSI {rsi:.0f}")
+                confidence = min(confidence + 0.2, 0.8)
+            elif rsi < 25:
+                hints.append(f"Oversold RSI {rsi:.0f}")
+                confidence = max(confidence - 0.2, 0.2)
 
-        else:
-            # Optimal exit - matches or exceeds watermark
-            if eur_watermark > 0 and expected_eur > eur_watermark:
-                reasoning += f" (New EUR high: +{(expected_eur/eur_watermark-1)*100:.1f}%)"
+        # Profit hints
+        if profit_pct > 2.0:
+            hints.append(f"Good profit {profit_pct:+.2f}%")
+            confidence = min(confidence + 0.1, 0.8)
+        elif profit_pct < -1.0:
+            hints.append(f"Loss {profit_pct:+.2f}%")
 
-        if should_exit:
-            opportunities.append(TradeOpportunity(
-                type="cycle_exit",
-                from_asset="ETH",
-                to_asset="EUR",
-                expected_return=0.05,
-                confidence=confidence,
-                reasoning=f"Cycle exit: {reasoning}",
-                market_conditions={
-                    "cycle_phase": self.cycle_analyzer.get_cycle_phase(btc_price),
-                    "profit_pct": profit_pct,
-                    "eur_quality": eur_quality,
-                    "expected_eur": expected_eur
-                }
-            ))
+        # Exit signals from cycle analyzer
+        if exit_signals:
+            hints.append(f"Exit signals: {exit_signals}")
+            confidence = min(confidence + 0.1, 0.8)
+
+        hint_text = ", ".join(hints) if hints else "No strong signals"
+
+        opportunities.append(TradeOpportunity(
+            type="hold_or_exit",
+            from_asset="ETH",
+            to_asset="EUR",
+            expected_return=profit_pct / 100,
+            confidence=confidence,
+            reasoning=f"Hold/Exit decision: {hint_text}.{eur_quality_note}{market_hours_note} Trend: {trend_summary}",
+            market_conditions={
+                "trend": trend_direction,
+                "trend_strength": trend_strength,
+                "profit_pct": profit_pct,
+                "expected_eur": expected_eur,
+                "eur_quality": eur_quality,
+                "rsi": rsi,
+                "markets_closed": markets_closed,
+                "exit_signals": exit_signals,
+                **trend_details
+            }
+        ))
+        print(f"      🔍 Hold/Exit Analysis: {trend_direction.upper()} ({trend_strength}) - Profit: {profit_pct:+.2f}%{market_hours_note}")
+        print(f"         RSI: {rsi:.0f if rsi else 'N/A'} | EUR quality: {eur_quality}")
+        print(f"         Consulting Grok for decision...")
 
         return opportunities
     
@@ -1066,11 +1101,13 @@ class GrokTrader:
                     return None
 
         if not self.api_key:
-            # Fallback: prioritize important signals
+            # Fallback: only execute entry opportunities without API key
+            # For hold_or_exit decisions, default to HOLD (return None)
             for opp in opportunities:
-                if opp.type in ["initial_exit", "cycle_exit", "cycle_entry"]:
+                if opp.type in ["initial_exit", "cycle_entry"]:
                     return opp
-            return opportunities[0]
+            # For hold_or_exit, return None to HOLD
+            return None
 
         btc_price = state["market"]["BTC"].price
         cycle_phase = self.cycle_analyzer.get_cycle_phase(btc_price)
@@ -1146,7 +1183,7 @@ class GrokTrader:
         else:
             market_status_text = "MARKET HOURS: All major markets closed - Lower volume, consider price moves carefully"
 
-        system_prompt = f"""You are Grok, trading ETH/EUR with cycle awareness.
+        system_prompt = f"""You are Grok, the PRIMARY decision maker for ETH/EUR trading. You are consulted on EVERY iteration.
 
 CURRENT CYCLE: {cycle_phase}
 BTC PRICE: €{btc_price:,.0f} (market indicator)
@@ -1159,30 +1196,35 @@ TRADE HISTORY (last {len(recent_trades)} trades):
 
 TIME SINCE LAST TRADE: {time_since_text}
 
-CRITICAL RULES:
-1. NEVER make contradictory trades within 5 minutes unless market conditions have dramatically changed
-2. If we just entered ETH, DO NOT immediately exit unless there's a critical risk (>3% drop, extreme overbought)
-3. If we just exited to EUR, DO NOT immediately re-enter unless RSI shows extreme oversold (<20) AND significant price improvement
-4. Consider the reasoning of recent trades - don't repeat failed strategies
-5. Respect the ETH watermark system - every ETH entry must beat the previous watermark
-6. EUR watermark is REFERENCE ONLY - prefer exits that match or exceed it, but can exit below if needed for safety
-7. If an exit opportunity shows EUR below 95% of watermark, it should have STRONG justification (3+ signals)
-8. INITIAL EXIT (first EUR exit): Consider historical trend analysis - if downcycle detected, exit immediately; if upcycle, wait for peak unless profit is already substantial. During markets closed, lower profit thresholds apply (just need to recoup fee ~0.26%)
+YOUR ROLE:
+You are the SOLE decision maker. The system provides hints and context, but YOU decide whether to:
+- HOLD: Set should_trade=false (keep current position)
+- EXIT/ENTER: Set should_trade=true and select the opportunity
 
-STRATEGY:
-- ETH has STRICT watermark (must improve every entry)
-- EUR has SOFT watermark (reference only - aim to match peaks but don't get trapped)
-- Accumulation phase: AGGRESSIVE (accept small improvements)
-- Late bull/Euphoria: CONSERVATIVE (require large improvements)
-- Exit to EUR when multiple top signals present - try to time the peak
-- Re-enter ETH when cycle bottoms and beats watermark
-- Initial exit strategy: Use 6-hour historical trend analysis to optimize exit timing (downcycle=exit now, upcycle=wait for peak)
-- Markets closed: Lower profit thresholds for initial exit (fee recouped is enough ~0.26%)
+OPPORTUNITY TYPES:
+- "hold_or_exit": You're holding ETH - decide whether to exit to EUR or continue holding
+- "initial_exit": First exit from starting ETH position
+- "cycle_entry": Re-entering ETH from EUR (must beat watermark)
+
+DECISION GUIDELINES:
+1. Consider the full context: trend direction, RSI, profit/loss, market hours, EUR quality
+2. HOLD if conditions are neutral or improving - don't exit just because you can
+3. EXIT if you see deteriorating conditions: strong downcycle, overbought RSI (>80), or to lock in good profits (>2%)
+4. Be patient - frequent trading costs fees (0.26% each way)
+5. During late_bull/euphoria phases, be more willing to exit to protect gains
+6. If RSI is oversold (<30) while holding ETH, that's usually a HOLD signal (recovery likely)
+7. If profit is negative but trend is upcycle, HOLD and wait for recovery
+8. If profit is negative and trend is downcycle, consider EXIT to stop losses
+
+CONSTRAINTS:
+- 5-minute minimum between trades (enforced by system)
+- ETH entries MUST beat watermark (enforced by system)
+- EUR watermark is reference only - can exit below it if needed
 
 Respond with JSON:
 {{
     "selected_index": 0-2 or null to HOLD,
-    "reasoning": "why this trade fits the cycle and doesn't contradict recent trades",
+    "reasoning": "your analysis and why you chose to hold or trade",
     "strategy": "aggressive/moderate/conservative",
     "should_trade": true/false
 }}"""
