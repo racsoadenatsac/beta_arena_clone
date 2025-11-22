@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
 """
-Alpha Arena Competition Bot - ETH/EUR Cycle-Aware Watermark Strategy
-Goal: Beat ETH watermark with cycle-adjusted requirements
+Alpha Arena Competition Bot - ETH/EUR Dual Watermark Ladder Strategy
+Goal: Accumulate more ETH while preserving EUR value (ladder up on BOTH sides)
 Starting Capital: 87.00 ETH
 Uses: Live Kraken API, cycle indicators, strategic EUR positioning
 
 Strategy:
-- Trade only ETH (with watermark) and EUR (no watermark)
+- Trade only ETH and EUR with STRICT dual watermark enforcement
+- ETH Watermark: STRICT - must beat by 0.1%+ on every EUR→ETH entry
+- EUR Watermark: STRICT - must beat by 0.1%+ on every ETH→EUR exit
 - Dynamic watermark requirements based on BTC price levels (as market indicator)
 - Strategic EUR exits/entries based on cycle position
-- STRICT watermark enforcement for ETH
-- Stop Loss: €5,000 max loss when in EUR - emergency buy back to ETH (safe position)
+- Stop Loss: €5,000 max loss when in EUR - emergency buy back to ETH (bypasses watermark)
 - ETH is our home base, EUR is temporary for ladder trading
 - Newsletter Integration: Paste newsletters into newsletter.txt for Grok AI context
 """
@@ -352,14 +353,14 @@ class IMessageNotifier:
 
 @dataclass
 class Watermark:
-    """Track ETH watermark (strict) and EUR watermark (reference only)"""
+    """Track ETH watermark (strict) and EUR watermark (strict) - dual ladder strategy"""
     eth_quantity: float = 0.0
     eth_achieved_at: Optional[str] = None
     eur_quantity: float = 0.0
     eur_achieved_at: Optional[str] = None
 
     def update_eth(self, quantity: float) -> bool:
-        """Update ETH watermark if new quantity is higher (strict enforcement)"""
+        """Update ETH watermark if new quantity is higher (STRICT - enforced before trade)"""
         if quantity > self.eth_quantity:
             self.eth_quantity = quantity
             self.eth_achieved_at = datetime.now().isoformat()
@@ -367,7 +368,7 @@ class Watermark:
         return False
 
     def update_eur(self, quantity: float) -> bool:
-        """Update EUR watermark if new quantity is higher (reference only, not enforced)"""
+        """Update EUR watermark if new quantity is higher (STRICT - enforced before trade)"""
         if quantity > self.eur_quantity:
             self.eur_quantity = quantity
             self.eur_achieved_at = datetime.now().isoformat()
@@ -823,7 +824,11 @@ class ETHEUROpportunityDetector:
     def _detect_eur_exit(self, market: Dict, profit_pct: float,
                         btc_price: float, eth_price: float, portfolio_value: float,
                         eur_watermark: float, market_info: Dict) -> List[TradeOpportunity]:
-        """Detect opportunities to exit to EUR (with EUR watermark consideration)"""
+        """Detect opportunities to exit to EUR (STRICT EUR watermark enforcement)
+
+        Only returns opportunities if EUR watermark can be beaten by min_eur_improvement (0.1%).
+        If watermark cannot be beaten, returns empty list (no trade opportunity).
+        """
         opportunities = []
 
         eth_data = market["ETH"]
@@ -908,25 +913,33 @@ class ETHEUROpportunityDetector:
 
         trend_summary = f"1h: {change_1h:+.2f}%, 3h: {change_3h:+.2f}%, 6h: {change_6h:+.2f}%"
 
-        # Check EUR watermark status - this is a GOAL to beat (similar to ETH watermark)
-        eur_quality = "optimal"
-        eur_quality_note = ""
-        can_beat_eur_watermark = True
+        # ========================================================================
+        # STRICT EUR WATERMARK REQUIREMENT - Must beat watermark to exit
+        # ========================================================================
+        # Check EUR watermark status - this is a REQUIREMENT (like ETH watermark)
+        min_eur_improvement = self.config.eur_reentry_improvement  # 0.1% minimum improvement
+
         if eur_watermark > 0:
+            required_eur = eur_watermark * (1 + min_eur_improvement)
+            can_beat_eur_watermark = expected_eur >= required_eur
             eur_ratio = expected_eur / eur_watermark
-            if eur_ratio < 1.0:
-                can_beat_eur_watermark = False
-                if eur_ratio < 0.95:
-                    eur_quality = "poor"
-                    eur_quality_note = f" EUR {(1-eur_ratio)*100:.1f}% below watermark"
-                elif eur_ratio < 0.98:
-                    eur_quality = "suboptimal"
-                    eur_quality_note = f" EUR {(1-eur_ratio)*100:.1f}% below watermark"
-                else:
-                    eur_quality = "close"
-                    eur_quality_note = f" EUR {(1-eur_ratio)*100:.1f}% below watermark"
+            improvement_pct = (eur_ratio - 1) * 100
+
+            if not can_beat_eur_watermark:
+                # CANNOT beat EUR watermark - do NOT create opportunity
+                deficit_pct = ((required_eur - expected_eur) / eur_watermark) * 100
+                print(f"      🔍 Hold/Exit Analysis: {trend_direction.upper()} ({trend_strength}) - Profit: {profit_pct:+.2f}%{market_hours_note}")
+                print(f"         ❌ CANNOT beat EUR watermark: need €{required_eur:,.2f}, can get €{expected_eur:,.2f}")
+                print(f"         Need {deficit_pct:.2f}% more EUR (or ETH price to rise {deficit_pct:.2f}%)")
+                print(f"         ⏸️ HOLDING ETH until better exit price")
+                return opportunities  # Return empty - no trade opportunity
             else:
-                eur_quality_note = f" New EUR high: +{(eur_ratio-1)*100:.1f}%"
+                # CAN beat EUR watermark - proceed with opportunity
+                eur_quality_note = f" New EUR high: +{improvement_pct:.2f}%"
+        else:
+            # First time exiting - no watermark to beat yet
+            can_beat_eur_watermark = True
+            eur_quality_note = ""
 
         # Check cycle-based exit signals (for context/hints, not gates)
         _, exit_signals = self.cycle_analyzer.should_exit_to_eur(
@@ -937,14 +950,10 @@ class ETHEUROpportunityDetector:
         hints = []
         confidence = 0.5  # Neutral - let Grok decide
 
-        # EUR watermark hints - IMPORTANT goal
+        # EUR watermark is now enforced - if we got here, we CAN beat it
         if eur_watermark > 0:
-            if can_beat_eur_watermark:
-                hints.append(f"CAN beat EUR watermark (+{(eur_ratio-1)*100:.2f}%)")
-                confidence = min(confidence + 0.15, 0.8)
-            else:
-                hints.append(f"CANNOT beat EUR watermark (need {(1-eur_ratio)*100:.2f}% more)")
-                confidence = max(confidence - 0.2, 0.2)  # Lower confidence if can't beat
+            hints.append(f"CAN beat EUR watermark (+{improvement_pct:.2f}%)")
+            confidence = min(confidence + 0.2, 0.8)
 
         # Trend hints
         if trend_direction == "downcycle":
@@ -990,8 +999,8 @@ class ETHEUROpportunityDetector:
                 "trend_strength": trend_strength,
                 "profit_pct": profit_pct,
                 "expected_eur": expected_eur,
-                "eur_quality": eur_quality,
-                "can_beat_eur_watermark": can_beat_eur_watermark,
+                "can_beat_eur_watermark": True,  # Always true if we got here
+                "eur_improvement_pct": improvement_pct if eur_watermark > 0 else 0,
                 "rsi": rsi,
                 "markets_closed": markets_closed,
                 "exit_signals": exit_signals,
@@ -1001,9 +1010,9 @@ class ETHEUROpportunityDetector:
         print(f"      🔍 Hold/Exit Analysis: {trend_direction.upper()} ({trend_strength}) - Profit: {profit_pct:+.2f}%{market_hours_note}")
         rsi_text = f"{rsi:.0f}" if rsi else "N/A"
         if eur_watermark > 0:
-            eur_wm_status = f"CAN beat (+{(eur_ratio-1)*100:.2f}%)" if can_beat_eur_watermark else f"CANNOT beat (need {(1-eur_ratio)*100:.2f}%)"
+            eur_wm_status = f"✅ CAN beat (+{improvement_pct:.2f}%)"
         else:
-            eur_wm_status = "N/A"
+            eur_wm_status = "First exit"
         print(f"         RSI: {rsi_text} | EUR Watermark: {eur_wm_status}")
         print(f"         Consulting Grok for decision...")
 
@@ -1308,7 +1317,7 @@ class GrokTrader:
         time_since_text = f"{minutes_since_last_trade:.1f} minutes ago" if minutes_since_last_trade else "No trades yet"
 
         eur_watermark = state.get("eur_watermark", 0)
-        eur_watermark_text = f"EUR WATERMARK: €{eur_watermark:,.2f} (GOAL - aim to beat on every exit)" if eur_watermark > 0 else "EUR WATERMARK: Not set yet"
+        eur_watermark_text = f"EUR WATERMARK: €{eur_watermark:,.2f} (STRICT - must beat on every exit)" if eur_watermark > 0 else "EUR WATERMARK: Not set yet"
 
         # Get recent newsletters
         newsletters = []
@@ -1371,27 +1380,29 @@ OPPORTUNITY TYPES:
 DECISION GUIDELINES:
 1. Consider the full context: trend direction, RSI, profit/loss, market hours, watermark status
 2. Be patient - frequent trading costs fees (0.26% each way)
+3. CRITICAL: BOTH watermarks are STRICTLY ENFORCED - you will ONLY see opportunities that can beat watermarks
 
 WHEN HOLDING ETH (hold_or_exit):
-3. AIM to beat EUR watermark on every exit - this is a key goal
-4. EXIT if: can beat EUR watermark AND (strong downcycle, overbought RSI >80, or good profits >2%)
-5. HOLD if: cannot beat EUR watermark yet - wait for better price (unless emergency)
-6. HOLD if: RSI is oversold (<30) - recovery likely, wait for better exit
-7. HOLD if: trend is upcycle - wait for peak before exiting
+4. If you see an opportunity, EUR watermark is ALREADY beaten (system enforces this)
+5. EXIT if: strong downcycle + overbought RSI >80, or very good EUR improvement >1%
+6. HOLD if: RSI is oversold (<30) - recovery likely, wait for better exit price
+7. HOLD if: trend is strong upcycle - wait for peak before exiting
+8. Consider: Is this a good time to lock in EUR profits, or should we wait for even better price?
 
 WHEN HOLDING EUR (hold_or_enter):
-8. STOP LOSS OVERRIDE: If opportunity type is "stop_loss", ALWAYS execute immediately - no exceptions. This means we've lost €5,000+ and must return to our safe ETH position.
-9. ENTER if: can beat ETH watermark AND (oversold RSI <30, or upcycle trend, or good entry signals)
-10. WAIT if: cannot beat ETH watermark yet - be patient for price to drop
-11. WAIT if: RSI is overbought (>75) even if can beat watermark - pullback likely
-12. If trend is downcycle, consider WAITING even longer for better entry price
-13. CRITICAL: If you cannot beat watermark, you MUST choose HOLD (should_trade=false)
+9. STOP LOSS OVERRIDE: If opportunity type is "stop_loss", ALWAYS execute immediately - no exceptions. This means we've lost €5,000+ and must return to our safe ETH position.
+10. If you see an opportunity, ETH watermark is ALREADY beaten (system enforces this)
+11. ENTER if: oversold RSI <30 + good ETH improvement, or strong upcycle trend starting
+12. HOLD if: RSI is overbought (>75) even if can beat watermark - pullback likely
+13. HOLD if: trend is downcycle - consider waiting for even lower price (better ETH entry)
+14. Consider: Will ETH price drop more, giving us even better entry?
 
 CONSTRAINTS:
 - 5-minute minimum between trades (enforced by system)
-- ETH entries MUST beat ETH watermark (enforced by system, EXCEPT for stop_loss)
-- EUR exits SHOULD beat EUR watermark (goal - prioritize this)
-- STOP LOSS: €5,000 maximum loss when holding EUR - triggers emergency buy back to ETH
+- ETH entries MUST beat ETH watermark by 0.1%+ (STRICTLY ENFORCED - no opportunity shown if can't beat)
+- EUR exits MUST beat EUR watermark by 0.1%+ (STRICTLY ENFORCED - no opportunity shown if can't beat)
+- STOP LOSS: €5,000 maximum loss when holding EUR - triggers emergency buy back to ETH (bypasses watermark)
+- GOAL: Accumulate more ETH over time while preserving EUR value (ladder up on BOTH sides)
 
 Respond with JSON:
 {{
@@ -1499,10 +1510,11 @@ class ETHEURBot:
         """Print startup header"""
         print(f"""
 ╔══════════════════════════════════════════════════════════════════════════╗
-║               ALPHA ARENA - ETH/EUR CYCLE-AWARE TRADER                   ║
+║           ALPHA ARENA - ETH/EUR DUAL WATERMARK LADDER TRADER             ║
 ╠══════════════════════════════════════════════════════════════════════════╣
-║  Strategy: ETH Watermark + EUR Strategic Positioning                     ║
-║  Starting: {self.config.initial_eth} ETH | Target: 2x Return                         ║
+║  Strategy: STRICT Dual Watermark Enforcement (ETH + EUR)                 ║
+║  Starting: {self.config.initial_eth} ETH | Goal: Accumulate ETH + Preserve EUR Value        ║
+║  ETH Watermark: STRICT 0.1%+ | EUR Watermark: STRICT 0.1%+              ║
 ║  Stop Loss: €5,000 max loss (ETH = safe base, EUR = temporary)          ║
 ║  Cycle Indicators: BTC Price Levels                                      ║
 ║  AI: Grok + Newsletter Context | Notifications: iMessage                 ║
@@ -1871,10 +1883,10 @@ class ETHEURBot:
         else:
             print(f"   {self.current_position.quantity:.6f} ETH @ €{eth_price:,.2f}")
         
-        print(f"\n🏔️ WATERMARKS:")
-        print(f"   ETH: {self.watermark.get():.6f} (strict)")
+        print(f"\n🏔️ WATERMARKS (BOTH STRICT):")
+        print(f"   ETH: {self.watermark.get():.6f} ETH (must beat by 0.1%+)")
         if self.watermark.get_eur() > 0:
-            print(f"   EUR: €{self.watermark.get_eur():,.2f} (reference only)")
+            print(f"   EUR: €{self.watermark.get_eur():,.2f} (must beat by 0.1%+)")
 
         # Show newsletter status
         newsletters = self.get_recent_newsletters(7)
