@@ -1717,8 +1717,10 @@ class ETHEURBot:
             entry_time=datetime.now().isoformat()
         )
 
-        self.watermark.update(self.config.initial_eth)
+        # Set initial watermarks
+        self.watermark.update(self.config.initial_eth)  # ETH watermark
         self.initial_value = self.config.initial_eth * eth_price
+        self.watermark.update_eur(self.initial_value)  # EUR watermark = initial EUR value
 
         cycle_analyzer = CyclePositionAnalyzer(self.config)
         cycle_phase = cycle_analyzer.get_cycle_phase(btc_price)
