@@ -855,15 +855,18 @@ class ETHEUROpportunityDetector:
 
             trend_summary = f"1h: {change_1h:+.2f}%, 3h: {change_3h:+.2f}%, 6h: {change_6h:+.2f}%"
 
-            # REQUIREMENT: First ETH->EUR trade must at least cover the trading fee
-            min_profit_for_initial = self.config.fee_rate * 100  # 0.26%
+            # REQUIREMENT: First ETH->EUR trade must cover BOTH exit and re-entry fees
+            # Round trip: (1 + profit) × (1 - fee)² ≥ 1
+            # Minimum profit ≥ 1/(1-fee)² - 1 ≈ 0.52% for 0.26% fee
+            min_profit_for_initial = ((1 / (1 - self.config.fee_rate)**2) - 1) * 100  # ~0.52%
 
             print(f"      🔍 Initial Exit Analysis: {trend_direction.upper()} ({trend_strength}) - Profit: {profit_pct:+.2f}%{market_hours_note}")
             print(f"         Price changes: {trend_summary}")
 
             if profit_pct < min_profit_for_initial:
-                # Not enough profit to cover fee - wait
-                print(f"         ⏳ Waiting for profit >= {min_profit_for_initial:.2f}% to cover fee (current: {profit_pct:+.2f}%)")
+                # Not enough profit to cover round-trip fees - wait
+                print(f"         ⏳ Waiting for profit >= {min_profit_for_initial:.2f}% to cover round-trip fees (current: {profit_pct:+.2f}%)")
+                print(f"            (Need to cover exit fee 0.26% + re-entry fee 0.26%)")
                 return opportunities  # Return empty - no opportunity yet
 
             # Profit covers fee - create opportunity for Grok
