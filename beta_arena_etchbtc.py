@@ -912,20 +912,24 @@ class ETHEUROpportunityDetector:
         # STRICT EUR WATERMARK REQUIREMENT - Must beat watermark to exit
         # ========================================================================
         # Check EUR watermark status - this is a REQUIREMENT (like ETH watermark)
+        # Formula: expected_eur - fee_paid > eur_watermark (ensures profit + fees exceed watermark)
         min_eur_improvement = self.config.eur_reentry_improvement  # 0.1% minimum improvement
 
         if eur_watermark > 0:
+            fee_paid = portfolio_value * self.config.fee_rate
+            net_after_fees = expected_eur - fee_paid
             required_eur = eur_watermark * (1 + min_eur_improvement)
-            can_beat_eur_watermark = expected_eur >= required_eur
-            eur_ratio = expected_eur / eur_watermark
+            can_beat_eur_watermark = net_after_fees > required_eur
+            eur_ratio = net_after_fees / eur_watermark
             improvement_pct = (eur_ratio - 1) * 100
 
             if not can_beat_eur_watermark:
                 # CANNOT beat EUR watermark - do NOT create opportunity
-                deficit_pct = ((required_eur - expected_eur) / eur_watermark) * 100
+                deficit = required_eur - net_after_fees
                 print(f"      🔍 Hold/Exit Analysis: {trend_direction.upper()} ({trend_strength}) - Profit: {profit_pct:+.2f}%{market_hours_note}")
-                print(f"         ❌ CANNOT beat EUR watermark: need €{required_eur:,.2f}, can get €{expected_eur:,.2f}")
-                print(f"         Need {deficit_pct:.2f}% more EUR (or ETH price to rise {deficit_pct:.2f}%)")
+                print(f"         ❌ CANNOT beat EUR watermark (after fees): need €{required_eur:,.2f}, net €{net_after_fees:,.2f}")
+                print(f"         Expected: €{expected_eur:,.2f} - Fee: €{fee_paid:.2f} = Net: €{net_after_fees:,.2f}")
+                print(f"         Short by €{deficit:,.2f} ({(deficit/eur_watermark)*100:.2f}%)")
                 print(f"         ⏸️ HOLDING ETH until better exit price")
                 return opportunities  # Return empty - no trade opportunity
             else:
@@ -1089,8 +1093,10 @@ class ETHEUROpportunityDetector:
                     btc_price, eth_price, eth_rsi
                 )
 
-                # Calculate loss percentage from watermark
-                watermark_deficit = (1 - expected_qty/watermark) * 100
+                # Calculate loss percentage from watermark (using net after fees)
+                fee_paid_emergency = (portfolio_value * self.config.fee_rate) / market["ETH"].ask
+                net_after_fees_emergency = expected_qty - fee_paid_emergency
+                watermark_deficit = (1 - net_after_fees_emergency/watermark) * 100
 
                 # Allow emergency re-entry if:
                 # 1. RSI < 20 (extremely oversold)
@@ -1128,19 +1134,22 @@ class ETHEUROpportunityDetector:
             # ========================================================================
             # STRICT ETH WATERMARK REQUIREMENT - Must beat watermark to enter
             # ========================================================================
-            # Calculate improvement vs watermark
-            improvement = (expected_qty / watermark) - 1
+            # Formula: expected_qty - fee_paid > watermark (ensures profit + fees exceed watermark)
+            fee_paid = (portfolio_value * self.config.fee_rate) / market["ETH"].ask
+            net_after_fees = expected_qty - fee_paid
             required_qty = watermark * (1 + min_improvement)
-            can_beat_watermark = expected_qty > required_qty
+            can_beat_watermark = net_after_fees > required_qty
+            improvement = (net_after_fees / watermark) - 1
 
             if not can_beat_watermark:
                 # CANNOT beat ETH watermark - do NOT create opportunity
-                deficit = (1 - expected_qty/watermark) * 100
-                price_drop_needed = (watermark / expected_qty - 1) * 100
+                deficit = required_qty - net_after_fees
+                deficit_pct = (deficit / watermark) * 100
 
                 print(f"      🔍 Hold/Enter Analysis: Checking ETH entry opportunity")
-                print(f"         ❌ CANNOT beat ETH watermark: need {required_qty:.6f} ETH, can get {expected_qty:.6f} ETH")
-                print(f"         Need ETH price to drop {price_drop_needed:.2f}% more (or add more EUR)")
+                print(f"         ❌ CANNOT beat ETH watermark (after fees): need {required_qty:.6f} ETH, net {net_after_fees:.6f} ETH")
+                print(f"         Expected: {expected_qty:.6f} ETH - Fee: {fee_paid:.6f} ETH = Net: {net_after_fees:.6f} ETH")
+                print(f"         Short by {deficit:.6f} ETH ({deficit_pct:.2f}%)")
                 print(f"         ⏸️ HOLDING EUR until better entry price")
                 return opportunities  # Return empty - no trade opportunity
 
