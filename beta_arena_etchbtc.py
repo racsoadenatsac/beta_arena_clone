@@ -49,7 +49,7 @@ class Config:
     min_improvement_accumulation: float = 0.00001  # 0.001% - Bear market
     min_improvement_early_bull: float = 0.0001     # 0.01% - Recovery
     min_improvement_mid_bull: float = 0.001        # 0.1% - Bull market
-    min_improvement_late_bull: float = 0.005       # 0.5% - Late cycle
+    min_improvement_late_bull: float = 0.0015      # 0.15% - Late cycle (reduced from 0.5%)
     min_improvement_euphoria: float = 0.01         # 1% - Top signals
     
     # Fees (Kraken)
@@ -1021,7 +1021,7 @@ class ETHEUROpportunityDetector:
     def _detect_eth_reentry(self, market: Dict, watermark: float,
                            portfolio_value: float, min_improvement: float,
                            eur_entry_value: Optional[float] = None,
-                           stop_loss_threshold: float = 5000.0) -> List[TradeOpportunity]:
+                           stop_loss_threshold: float = 2000.0) -> List[TradeOpportunity]:
         """Detect ETH re-entry opportunities from EUR - ALWAYS consult Grok"""
         opportunities = []
 
@@ -1081,8 +1081,54 @@ class ETHEUROpportunityDetector:
             ))
         else:
             # ========================================================================
-            # ALWAYS consult Grok when holding EUR - let AI decide based on full context
+            # EMERGENCY RE-ENTRY EXCEPTION - Extremely oversold conditions
             # ========================================================================
+            # Check for emergency re-entry conditions that bypass watermark
+            # This prevents getting stuck in EUR during extreme dips
+            emergency_reentry = False
+            emergency_reason = ""
+
+            if eth_rsi and eth_rsi < 20:
+                # RSI extremely oversold + check for buy signals
+                _, reentry_signals = self.cycle_analyzer.should_reenter_eth(
+                    btc_price, eth_price, eth_rsi
+                )
+
+                # Calculate loss percentage from watermark
+                watermark_deficit = (1 - expected_qty/watermark) * 100
+
+                # Allow emergency re-entry if:
+                # 1. RSI < 20 (extremely oversold)
+                # 2. Have buy signals OR deficit < 5%
+                if reentry_signals or watermark_deficit < 5.0:
+                    emergency_reentry = True
+                    emergency_reason = f"EMERGENCY: RSI {eth_rsi:.0f} extremely oversold"
+                    if reentry_signals:
+                        emergency_reason += f", {reentry_signals}"
+
+                    print(f"      🚨 Emergency Re-entry Override Activated")
+                    print(f"         RSI: {eth_rsi:.0f} (extremely oversold)")
+                    print(f"         Will get: {expected_qty:.6f} ETH (below watermark {watermark:.6f})")
+                    print(f"         Reason: Prevent being stuck in EUR during extreme dip")
+
+                    opportunities.append(TradeOpportunity(
+                        type="emergency_entry",
+                        from_asset="EUR",
+                        to_asset="ETH",
+                        expected_return=(expected_qty / watermark) - 1,
+                        confidence=0.85,
+                        reasoning=emergency_reason,
+                        market_conditions={
+                            "emergency": True,
+                            "rsi": eth_rsi,
+                            "expected_qty": expected_qty,
+                            "watermark": watermark,
+                            "deficit_pct": watermark_deficit
+                        },
+                        expected_quantity=expected_qty
+                    ))
+
+                    return opportunities
 
             # ========================================================================
             # STRICT ETH WATERMARK REQUIREMENT - Must beat watermark to enter
@@ -1381,7 +1427,8 @@ You are the SOLE decision maker. The system provides hints and context, but YOU 
 - EXIT/ENTER: Set should_trade=true and select the opportunity
 
 OPPORTUNITY TYPES:
-- "stop_loss": EMERGENCY - Portfolio loss >= €5,000 when holding EUR. ALWAYS execute immediately to buy back ETH (our safe home base). ETH is where we want to be - EUR is just temporary for ladder trading.
+- "stop_loss": EMERGENCY - Portfolio loss >= €2,000 when holding EUR. ALWAYS execute immediately to buy back ETH (our safe home base).
+- "emergency_entry": EMERGENCY - RSI <20 extremely oversold. Bypasses watermark to avoid being stuck in EUR during extreme dips. STRONGLY consider executing.
 - "hold_or_exit": You're holding ETH - decide whether to exit to EUR or continue holding
 - "hold_or_enter": You're holding EUR - decide whether to enter ETH or continue waiting
 - "initial_exit": First exit from starting ETH position
@@ -1400,18 +1447,20 @@ WHEN HOLDING ETH (hold_or_exit):
 8. Consider: Is this a good time to lock in EUR profits, or should we wait for even better price?
 
 WHEN HOLDING EUR (hold_or_enter):
-9. STOP LOSS OVERRIDE: If opportunity type is "stop_loss", ALWAYS execute immediately - no exceptions. This means we've lost €5,000+ and must return to our safe ETH position.
-10. If you see an opportunity, ETH watermark is ALREADY beaten (system enforces this)
-11. ENTER if: oversold RSI <30 + good ETH improvement, or strong upcycle trend starting
-12. HOLD if: RSI is overbought (>75) even if can beat watermark - pullback likely
-13. HOLD if: trend is downcycle - consider waiting for even lower price (better ETH entry)
-14. Consider: Will ETH price drop more, giving us even better entry?
+9. STOP LOSS OVERRIDE: If opportunity type is "stop_loss", ALWAYS execute immediately - no exceptions. This means we've lost €2,000+ and must return to our safe ETH position.
+10. EMERGENCY RE-ENTRY: If opportunity type is "emergency_entry", STRONGLY consider executing - RSI <20 is extremely oversold and we need to avoid being stuck in EUR.
+11. If you see a regular opportunity, ETH watermark is ALREADY beaten (system enforces this)
+12. ENTER if: oversold RSI <30 + good ETH improvement, or strong upcycle trend starting
+13. HOLD if: RSI is overbought (>75) even if can beat watermark - pullback likely
+14. HOLD if: trend is downcycle - consider waiting for even lower price (better ETH entry)
+15. Consider: Will ETH price drop more, giving us even better entry?
 
 CONSTRAINTS:
 - 5-minute minimum between trades (enforced by system)
-- ETH entries MUST beat ETH watermark by 0.1%+ (STRICTLY ENFORCED - no opportunity shown if can't beat)
-- EUR exits MUST beat EUR watermark by 0.1%+ (STRICTLY ENFORCED - no opportunity shown if can't beat)
-- STOP LOSS: €5,000 maximum loss when holding EUR - triggers emergency buy back to ETH (bypasses watermark)
+- ETH entries MUST beat ETH watermark by 0.1-0.15%+ (cycle-adjusted, STRICTLY ENFORCED)
+- EUR exits MUST beat EUR watermark by 0.1%+ (STRICTLY ENFORCED)
+- STOP LOSS: €2,000 maximum loss when holding EUR - triggers emergency buy back to ETH (bypasses watermark)
+- EMERGENCY RE-ENTRY: RSI <20 triggers emergency re-entry to avoid EUR trap (bypasses watermark if deficit <5%)
 - GOAL: Accumulate more ETH over time while preserving EUR value (ladder up on BOTH sides)
 
 Respond with JSON:
@@ -1486,7 +1535,7 @@ class ETHEURBot:
 
         # Stop loss tracking
         self.eur_entry_value: Optional[float] = None  # EUR value when we first exit to EUR
-        self.stop_loss_threshold = 5000.0  # Maximum acceptable loss in EUR
+        self.stop_loss_threshold = 2000.0  # Maximum acceptable loss in EUR (reduced from €5,000)
 
         # Exit patience tracking
         self.exit_signal_first_seen: Optional[str] = None  # Timestamp of first exit signal
@@ -1525,7 +1574,7 @@ class ETHEURBot:
 ║  Strategy: STRICT Dual Watermark Enforcement (ETH + EUR)                 ║
 ║  Starting: {self.config.initial_eth} ETH | Goal: Accumulate ETH + Preserve EUR Value        ║
 ║  ETH Watermark: STRICT 0.1%+ | EUR Watermark: STRICT 0.1%+              ║
-║  Stop Loss: €5,000 max loss (ETH = safe base, EUR = temporary)          ║
+║  Stop Loss: €2,000 max loss | Emergency Re-entry: RSI <20               ║
 ║  Cycle Indicators: BTC Price Levels                                      ║
 ║  AI: Grok + Newsletter Context | Notifications: iMessage                 ║
 ║  📰 To add newsletter: Create newsletter.txt file during operation       ║
@@ -1737,9 +1786,9 @@ class ETHEURBot:
             new_price = market["ETH"].ask
             new_qty = (old_value * (1 - self.config.fee_rate)) / new_price
 
-            # CRITICAL: Never accept position below watermark (EXCEPT for stop_loss emergency)
-            is_stop_loss = opportunity.type == "stop_loss"
-            if not is_stop_loss and self.watermark.get() > 0 and new_qty <= self.watermark.get():
+            # CRITICAL: Never accept position below watermark (EXCEPT for emergency trades)
+            is_emergency = opportunity.type in ["stop_loss", "emergency_entry"]
+            if not is_emergency and self.watermark.get() > 0 and new_qty <= self.watermark.get():
                 print(f"\n   ❌ TRADE REJECTED: Would get {new_qty:.6f} ETH, below watermark {self.watermark.get():.6f}")
                 return False
         
