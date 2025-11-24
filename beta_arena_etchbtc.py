@@ -855,22 +855,13 @@ class ETHEUROpportunityDetector:
 
             trend_summary = f"1h: {change_1h:+.2f}%, 3h: {change_3h:+.2f}%, 6h: {change_6h:+.2f}%"
 
-            # REQUIREMENT: First ETH->EUR exit must cover the exit fee (0.26%)
-            # This ensures that even if price returns to entry level, we can re-enter without loss
-            min_profit_for_exit = self.config.fee_rate * 100  # 0.26%
-
+            # Initial exit: Create opportunity based on trend analysis, let Grok decide
+            # Transaction fee (0.26%) will be covered automatically from proceeds
             print(f"      🔍 Initial Exit Analysis: {trend_direction.upper()} ({trend_strength}) - Profit: {profit_pct:+.2f}%{market_hours_note}")
             print(f"         Price changes: {trend_summary}")
-            print(f"         Required profit: ≥{min_profit_for_exit:.2f}% (covers exit fee)")
+            print(f"         Creating opportunity for Grok to evaluate market conditions")
 
-            if profit_pct < min_profit_for_exit:
-                # Profit doesn't cover exit fee - wait for price to rise more
-                deficit = min_profit_for_exit - profit_pct
-                print(f"         ⏳ Need {deficit:.2f}% more profit to safely exit")
-                print(f"            Current: {profit_pct:+.2f}% | Required: {min_profit_for_exit:.2f}%")
-                return opportunities  # Return empty - no opportunity yet
-
-            # Profit covers fee - create opportunity for Grok
+            # Create opportunity for Grok to decide
             confidence = 0.5  # Neutral - let Grok decide
 
             # Adjust confidence hints based on conditions
@@ -879,9 +870,9 @@ class ETHEUROpportunityDetector:
                 hint = "Downcycle detected"
             elif profit_pct > 1.0:
                 confidence = 0.7
-                hint = f"Decent profit ({profit_pct:.2f}%)"
+                hint = f"Good profit opportunity ({profit_pct:.2f}%)"
             else:
-                hint = f"Profit covers fee ({profit_pct:.2f}%)"
+                hint = f"Current profit: {profit_pct:+.2f}%"
 
             opportunities.append(TradeOpportunity(
                 type="initial_exit",
