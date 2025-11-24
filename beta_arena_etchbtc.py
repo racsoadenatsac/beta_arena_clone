@@ -336,11 +336,10 @@ class IMessageNotifier:
         message += f"      Value: €{value:,.2f} | Fee: €{fee:.2f}\n"
 
         if to_asset == "EUR":
-            # Selling ETH to EUR: show EUR amount and its ETH equivalent
-            eth_equivalent = new_qty / eth_price if eth_price > 0 else 0
-            message += f"      New Position: €{new_qty:,.2f} ({eth_equivalent:.6f} ETH @ €{eth_price:,.2f})\n"
+            # Holding EUR position
+            message += f"      New Position: €{new_qty:,.2f} (EUR)\n"
         else:
-            # Buying ETH: show ETH amount and price
+            # Holding ETH position
             message += f"      New Position: {new_qty:.6f} ETH @ €{new_price:,.2f}\n"
 
         message += f"      Reason: {reasoning}"
@@ -920,7 +919,8 @@ class ETHEUROpportunityDetector:
             net_after_fees = expected_eur - fee_paid
             required_eur = eur_watermark * (1 + min_eur_improvement)
             can_beat_eur_watermark = net_after_fees > required_eur
-            eur_ratio = net_after_fees / eur_watermark
+            # Show improvement based on actual new watermark (expected_eur), not net_after_fees
+            eur_ratio = expected_eur / eur_watermark
             improvement_pct = (eur_ratio - 1) * 100
 
             if not can_beat_eur_watermark:
