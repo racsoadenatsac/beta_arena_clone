@@ -1792,10 +1792,10 @@ class ETHEURBot:
             new_price = market["ETH"].ask
             new_qty = (old_value * (1 - self.config.fee_rate)) / new_price
 
-            # CRITICAL: Never accept position below watermark (EXCEPT for emergency trades)
-            is_emergency = opportunity.type in ["stop_loss", "emergency_entry"]
-            if not is_emergency and self.watermark.get() > 0 and new_qty <= self.watermark.get():
+            # CRITICAL: STRICT watermark enforcement - NO exceptions (not even for Grok)
+            if self.watermark.get() > 0 and new_qty <= self.watermark.get():
                 print(f"\n   ❌ TRADE REJECTED: Would get {new_qty:.6f} ETH, below watermark {self.watermark.get():.6f}")
+                print(f"      Watermark strategy is STRICT - no overrides allowed")
                 return False
         
         # Update position
