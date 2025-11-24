@@ -1084,11 +1084,26 @@ class ETHEUROpportunityDetector:
             # ALWAYS consult Grok when holding EUR - let AI decide based on full context
             # ========================================================================
 
+            # ========================================================================
+            # STRICT ETH WATERMARK REQUIREMENT - Must beat watermark to enter
+            # ========================================================================
             # Calculate improvement vs watermark
             improvement = (expected_qty / watermark) - 1
             required_qty = watermark * (1 + min_improvement)
             can_beat_watermark = expected_qty > required_qty
 
+            if not can_beat_watermark:
+                # CANNOT beat ETH watermark - do NOT create opportunity
+                deficit = (1 - expected_qty/watermark) * 100
+                price_drop_needed = (watermark / expected_qty - 1) * 100
+
+                print(f"      🔍 Hold/Enter Analysis: Checking ETH entry opportunity")
+                print(f"         ❌ CANNOT beat ETH watermark: need {required_qty:.6f} ETH, can get {expected_qty:.6f} ETH")
+                print(f"         Need ETH price to drop {price_drop_needed:.2f}% more (or add more EUR)")
+                print(f"         ⏸️ HOLDING EUR until better entry price")
+                return opportunities  # Return empty - no trade opportunity
+
+            # CAN beat watermark - proceed with analyzing opportunity
             # Analyze trend
             trend_direction, trend_strength, trend_details = self._analyze_historical_trend(market)
             change_1h = trend_details.get("change_1h", 0)
@@ -1105,14 +1120,9 @@ class ETHEUROpportunityDetector:
             hints = []
             confidence = 0.5  # Neutral - let Grok decide
 
-            # Watermark status
-            if can_beat_watermark:
-                hints.append(f"Can beat watermark by {improvement*100:.2f}%")
-                confidence = 0.7
-            else:
-                deficit = (1 - expected_qty/watermark) * 100
-                hints.append(f"Cannot beat watermark (need {deficit:.2f}% more drop)")
-                confidence = 0.3
+            # Watermark is now enforced - if we got here, we CAN beat it
+            hints.append(f"Can beat watermark by {improvement*100:.2f}%")
+            confidence = 0.7
 
             # Trend hints
             if trend_direction == "downcycle":
@@ -1149,7 +1159,7 @@ class ETHEUROpportunityDetector:
                     "trend": trend_direction,
                     "trend_strength": trend_strength,
                     "improvement": improvement,
-                    "can_beat_watermark": can_beat_watermark,
+                    "can_beat_watermark": True,  # Always true if we got here
                     "expected_qty": expected_qty,
                     "required_qty": required_qty,
                     "rsi": eth_rsi,
@@ -1160,7 +1170,7 @@ class ETHEUROpportunityDetector:
             ))
 
             rsi_text = f"{eth_rsi:.0f}" if eth_rsi else "N/A"
-            watermark_status = f"CAN beat (+{improvement*100:.2f}%)" if can_beat_watermark else f"CANNOT beat (need {(1-expected_qty/watermark)*100:.2f}% drop)"
+            watermark_status = f"✅ CAN beat (+{improvement*100:.2f}%)"
             print(f"      🔍 Hold/Enter Analysis: {trend_direction.upper()} ({trend_strength})")
             print(f"         RSI: {rsi_text} | Watermark: {watermark_status}")
             print(f"         Consulting Grok for decision...")
