@@ -855,25 +855,19 @@ class ETHEUROpportunityDetector:
 
             trend_summary = f"1h: {change_1h:+.2f}%, 3h: {change_3h:+.2f}%, 6h: {change_6h:+.2f}%"
 
-            # REQUIREMENT: First ETH->EUR trade must allow re-entry with at least starting ETH
-            # Direct check: Can the EUR we get buy back our starting ETH quantity?
-            starting_eth_qty = portfolio_value / eth_price  # Current ETH quantity
-            eth_after_roundtrip = expected_eur / eth_price  # ETH we can buy back after exit fee
-
-            # Need at least starting quantity (accounting for the 0.26% re-entry fee we'd pay)
-            # So we need: eth_after_roundtrip ≥ starting_eth_qty
-            can_reenter_profitably = eth_after_roundtrip >= starting_eth_qty
+            # REQUIREMENT: First ETH->EUR exit must cover the exit fee (0.26%)
+            # This ensures that even if price returns to entry level, we can re-enter without loss
+            min_profit_for_exit = self.config.fee_rate * 100  # 0.26%
 
             print(f"      🔍 Initial Exit Analysis: {trend_direction.upper()} ({trend_strength}) - Profit: {profit_pct:+.2f}%{market_hours_note}")
             print(f"         Price changes: {trend_summary}")
-            print(f"         Current: {starting_eth_qty:.6f} ETH → Can re-enter with: {eth_after_roundtrip:.6f} ETH")
+            print(f"         Required profit: ≥{min_profit_for_exit:.2f}% (covers exit fee)")
 
-            if not can_reenter_profitably:
-                # Cannot re-enter with same ETH quantity - wait
-                deficit_eth = starting_eth_qty - eth_after_roundtrip
-                deficit_pct = (deficit_eth / starting_eth_qty) * 100
-                print(f"         ⏳ Cannot re-enter profitably: short {deficit_eth:.6f} ETH ({deficit_pct:.2f}%)")
-                print(f"            Need ETH price to rise more or wait for better conditions")
+            if profit_pct < min_profit_for_exit:
+                # Profit doesn't cover exit fee - wait for price to rise more
+                deficit = min_profit_for_exit - profit_pct
+                print(f"         ⏳ Need {deficit:.2f}% more profit to safely exit")
+                print(f"            Current: {profit_pct:+.2f}% | Required: {min_profit_for_exit:.2f}%")
                 return opportunities  # Return empty - no opportunity yet
 
             # Profit covers fee - create opportunity for Grok
