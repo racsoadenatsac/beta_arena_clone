@@ -855,18 +855,25 @@ class ETHEUROpportunityDetector:
 
             trend_summary = f"1h: {change_1h:+.2f}%, 3h: {change_3h:+.2f}%, 6h: {change_6h:+.2f}%"
 
-            # REQUIREMENT: First ETH->EUR trade must cover BOTH exit and re-entry fees
-            # Round trip: (1 + profit) × (1 - fee)² ≥ 1
-            # Minimum profit ≥ 1/(1-fee)² - 1 ≈ 0.52% for 0.26% fee
-            min_profit_for_initial = ((1 / (1 - self.config.fee_rate)**2) - 1) * 100  # ~0.52%
+            # REQUIREMENT: First ETH->EUR trade must allow re-entry with at least starting ETH
+            # Direct check: Can the EUR we get buy back our starting ETH quantity?
+            starting_eth_qty = portfolio_value / eth_price  # Current ETH quantity
+            eth_after_roundtrip = expected_eur / eth_price  # ETH we can buy back after exit fee
+
+            # Need at least starting quantity (accounting for the 0.26% re-entry fee we'd pay)
+            # So we need: eth_after_roundtrip ≥ starting_eth_qty
+            can_reenter_profitably = eth_after_roundtrip >= starting_eth_qty
 
             print(f"      🔍 Initial Exit Analysis: {trend_direction.upper()} ({trend_strength}) - Profit: {profit_pct:+.2f}%{market_hours_note}")
             print(f"         Price changes: {trend_summary}")
+            print(f"         Current: {starting_eth_qty:.6f} ETH → Can re-enter with: {eth_after_roundtrip:.6f} ETH")
 
-            if profit_pct < min_profit_for_initial:
-                # Not enough profit to cover round-trip fees - wait
-                print(f"         ⏳ Waiting for profit >= {min_profit_for_initial:.2f}% to cover round-trip fees (current: {profit_pct:+.2f}%)")
-                print(f"            (Need to cover exit fee 0.26% + re-entry fee 0.26%)")
+            if not can_reenter_profitably:
+                # Cannot re-enter with same ETH quantity - wait
+                deficit_eth = starting_eth_qty - eth_after_roundtrip
+                deficit_pct = (deficit_eth / starting_eth_qty) * 100
+                print(f"         ⏳ Cannot re-enter profitably: short {deficit_eth:.6f} ETH ({deficit_pct:.2f}%)")
+                print(f"            Need ETH price to rise more or wait for better conditions")
                 return opportunities  # Return empty - no opportunity yet
 
             # Profit covers fee - create opportunity for Grok
