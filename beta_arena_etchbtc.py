@@ -1943,9 +1943,10 @@ class ETHEURBot:
             print(f"   {self.current_position.quantity:.6f} ETH @ €{eth_price:,.2f}")
         
         print(f"\n🏔️ WATERMARKS (BOTH STRICT):")
-        print(f"   ETH: {self.watermark.get():.6f} ETH (must beat by 0.1%+)")
+        print(f"   ETH: {self.watermark.get():.6f} ETH (must beat by {min_improvement*100:.3f}%+)")
         if self.watermark.get_eur() > 0:
-            print(f"   EUR: €{self.watermark.get_eur():,.2f} (must beat by 0.1%+)")
+            eur_min = self.config.eur_reentry_improvement * 100
+            print(f"   EUR: €{self.watermark.get_eur():,.2f} (must beat by {eur_min:.1f}%+)")
 
         # Show newsletter status
         newsletters = self.get_recent_newsletters(7)
