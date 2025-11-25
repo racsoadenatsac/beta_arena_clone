@@ -1523,6 +1523,10 @@ class ETHEURBot:
         self.exit_signal_count: int = 0  # How many iterations we've seen exit signal
         self.last_eth_price_at_signal: Optional[float] = None  # ETH price when signal first appeared
 
+        # EUR→ETH consensus tracking (gather Grok opinions over 5 minutes)
+        self.eth_entry_decisions: List[Dict] = []  # Store Grok decisions for EUR→ETH
+        self.eth_entry_consensus_start: Optional[str] = None  # When we started collecting
+
         # Database - must be initialized before creating AI trader
         self.db_name = f"eth_eur_{config.bot_name.lower()}.db"
         self._init_db()
@@ -1989,11 +1993,97 @@ class ETHEURBot:
                 print(f"      Type: {selected.type}")
                 print(f"      Reasoning: {selected.reasoning}")
 
-                # Execute trade based on Grok's decision (no user confirmation)
-                print(f"\n   🤖 Executing Grok's decision...")
-                self.execute_trade(selected, market)
+                # EUR→ETH entries: Collect opinions over 5 minutes for consensus
+                if selected.from_asset == "EUR" and selected.to_asset == "ETH":
+                    now = datetime.now()
+
+                    # Start consensus tracking if not already started
+                    if self.eth_entry_consensus_start is None:
+                        self.eth_entry_consensus_start = now.isoformat()
+                        self.eth_entry_decisions = []
+                        print(f"\n   📊 Starting EUR→ETH consensus tracking (5 minutes)...")
+
+                    # Record Grok's decision
+                    self.eth_entry_decisions.append({
+                        "timestamp": now.isoformat(),
+                        "decision": "BUY",  # Grok approved
+                        "reasoning": selected.reasoning,
+                        "expected_qty": selected.expected_quantity,
+                        "confidence": selected.confidence
+                    })
+
+                    # Check if 5 minutes have elapsed
+                    start_time = datetime.fromisoformat(self.eth_entry_consensus_start)
+                    elapsed_minutes = (now - start_time).total_seconds() / 60
+
+                    if elapsed_minutes >= 5.0:
+                        # Analyze consensus
+                        total_checks = len(self.eth_entry_decisions)
+                        buy_votes = len([d for d in self.eth_entry_decisions if d["decision"] == "BUY"])
+                        buy_pct = (buy_votes / total_checks * 100) if total_checks > 0 else 0
+
+                        print(f"\n   📊 EUR→ETH CONSENSUS COMPLETE:")
+                        print(f"      Duration: {elapsed_minutes:.1f} minutes")
+                        print(f"      Grok checks: {total_checks}")
+                        print(f"      Buy signals: {buy_votes}/{total_checks} ({buy_pct:.0f}%)")
+
+                        # Execute if strong consensus (>60% buy)
+                        if buy_pct >= 60:
+                            print(f"      ✅ CONSENSUS: BUY ({buy_pct:.0f}% agreement)")
+                            print(f"\n   🤖 Executing consensus decision...")
+                            self.execute_trade(selected, market)
+                        else:
+                            print(f"      ⏸️ CONSENSUS: HOLD ({buy_pct:.0f}% agreement - need 60%+)")
+
+                        # Reset consensus tracking
+                        self.eth_entry_consensus_start = None
+                        self.eth_entry_decisions = []
+                    else:
+                        remaining = 5.0 - elapsed_minutes
+                        print(f"      📊 Collecting opinions... ({total_checks} checks, {remaining:.1f}min remaining)")
+                        print(f"      Current agreement: {buy_votes}/{total_checks} ({buy_pct:.0f}%)")
+
+                # ETH→EUR exits: Execute immediately (no consensus needed)
+                else:
+                    print(f"\n   🤖 Executing Grok's decision...")
+                    self.execute_trade(selected, market)
             else:
                 print(f"   ⏸️ HOLD")
+
+                # If we're tracking consensus but Grok says hold, record it
+                if self.current_position and self.current_position.symbol == "EUR":
+                    if self.eth_entry_consensus_start is not None:
+                        now = datetime.now()
+                        self.eth_entry_decisions.append({
+                            "timestamp": now.isoformat(),
+                            "decision": "HOLD",
+                            "reasoning": "Grok recommended hold",
+                            "expected_qty": None,
+                            "confidence": 0
+                        })
+
+                        # Check if 5 minutes elapsed
+                        start_time = datetime.fromisoformat(self.eth_entry_consensus_start)
+                        elapsed_minutes = (now - start_time).total_seconds() / 60
+
+                        if elapsed_minutes >= 5.0:
+                            total_checks = len(self.eth_entry_decisions)
+                            buy_votes = len([d for d in self.eth_entry_decisions if d["decision"] == "BUY"])
+                            buy_pct = (buy_votes / total_checks * 100) if total_checks > 0 else 0
+
+                            print(f"\n   📊 EUR→ETH CONSENSUS COMPLETE:")
+                            print(f"      Duration: {elapsed_minutes:.1f} minutes")
+                            print(f"      Grok checks: {total_checks}")
+                            print(f"      Buy signals: {buy_votes}/{total_checks} ({buy_pct:.0f}%)")
+                            print(f"      ⏸️ CONSENSUS: HOLD ({buy_pct:.0f}% agreement - need 60%+)")
+
+                            # Reset consensus tracking
+                            self.eth_entry_consensus_start = None
+                            self.eth_entry_decisions = []
+                        else:
+                            remaining = 5.0 - elapsed_minutes
+                            print(f"      📊 Consensus tracking: {total_checks} checks, {remaining:.1f}min remaining")
+                            print(f"      Current agreement: {buy_votes}/{total_checks} ({buy_pct:.0f}%)")
         
         # Log performance
         self.cursor.execute("""
