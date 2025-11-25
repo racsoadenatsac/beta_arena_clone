@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 """
-Alpha Arena Competition Bot - ETH/EUR Dual Watermark Ladder Strategy
-Goal: Accumulate more ETH while preserving EUR value (ladder up on BOTH sides)
+Alpha Arena Competition Bot - ETH Watermark Accumulation Strategy
+Goal: Accumulate more ETH through strategic EUR positioning
 Starting Capital: 87.00 ETH
-Uses: Live Kraken API, cycle indicators, strategic EUR positioning
+Uses: Live Kraken API, cycle indicators, Grok AI decision making
 
 Strategy:
-- Trade only ETH and EUR with STRICT dual watermark enforcement
-- ETH Watermark: STRICT - must beat by 0.1%+ on every EUR→ETH entry
-- EUR Watermark: STRICT - must beat by 0.1%+ on every ETH→EUR exit
-- Dynamic watermark requirements based on BTC price levels (as market indicator)
-- Strategic EUR exits/entries based on cycle position
-- Stop Loss: €5,000 max loss when in EUR - emergency buy back to ETH (bypasses watermark)
+- Trade only ETH and EUR with STRICT ETH watermark enforcement
+- ETH Watermark: STRICT - must beat on every EUR→ETH re-entry (cycle-based improvement)
+- EUR Watermark: Tracked for reference only (Grok decides exits based on market conditions)
+- Dynamic ETH requirements based on BTC price levels (market cycle indicator)
+- Strategic EUR exits/entries based on cycle position, trends, RSI
+- Stop Loss: €2,000 max loss when in EUR - emergency buy back to ETH
 - ETH is our home base, EUR is temporary for ladder trading
 - Newsletter Integration: Paste newsletters into newsletter.txt for Grok AI context
 """
@@ -908,35 +908,19 @@ class ETHEUROpportunityDetector:
         trend_summary = f"1h: {change_1h:+.2f}%, 3h: {change_3h:+.2f}%, 6h: {change_6h:+.2f}%"
 
         # ========================================================================
-        # STRICT EUR WATERMARK REQUIREMENT - Must beat watermark to exit
+        # EUR WATERMARK - Track for reference only (NOT enforced)
         # ========================================================================
-        # Check EUR watermark status - this is a REQUIREMENT (like ETH watermark)
-        # Formula: expected_eur > eur_watermark (fee already deducted in expected_eur)
-        min_eur_improvement = self.config.eur_reentry_improvement  # 0.1% minimum improvement
+        # ETH watermark is the only strict requirement - EUR is reference only
+        # Grok decides EUR exits based on market conditions
+
+        eur_quality_note = ""
+        improvement_pct = 0
 
         if eur_watermark > 0:
-            # Check if expected EUR (after paying exit fee) beats watermark
-            # Fee is already deducted in expected_eur, don't deduct twice!
-            required_eur = eur_watermark * (1 + min_eur_improvement)
-            can_beat_eur_watermark = expected_eur > required_eur
+            # Calculate improvement for informational purposes only
             eur_ratio = expected_eur / eur_watermark
             improvement_pct = (eur_ratio - 1) * 100
-
-            if not can_beat_eur_watermark:
-                # CANNOT beat EUR watermark - do NOT create opportunity
-                deficit = required_eur - expected_eur
-                print(f"      🔍 Hold/Exit Analysis: {trend_direction.upper()} ({trend_strength}) - Profit: {profit_pct:+.2f}%{market_hours_note}")
-                print(f"         ❌ CANNOT beat EUR watermark (after fees): need €{required_eur:,.2f}, can get €{expected_eur:,.2f}")
-                print(f"         Short by €{deficit:,.2f} ({(deficit/eur_watermark)*100:.2f}%)")
-                print(f"         ⏸️ HOLDING ETH until better exit price")
-                return opportunities  # Return empty - no trade opportunity
-            else:
-                # CAN beat EUR watermark - proceed with opportunity
-                eur_quality_note = f" New EUR high: +{improvement_pct:.2f}%"
-        else:
-            # First time exiting - no watermark to beat yet
-            can_beat_eur_watermark = True
-            eur_quality_note = ""
+            eur_quality_note = f" EUR: {improvement_pct:+.2f}% vs last exit"
 
         # Check cycle-based exit signals (for context/hints, not gates)
         _, exit_signals = self.cycle_analyzer.should_exit_to_eur(
@@ -947,10 +931,9 @@ class ETHEUROpportunityDetector:
         hints = []
         confidence = 0.5  # Neutral - let Grok decide
 
-        # EUR watermark is now enforced - if we got here, we CAN beat it
-        if eur_watermark > 0:
-            hints.append(f"CAN beat EUR watermark (+{improvement_pct:.2f}%)")
-            confidence = min(confidence + 0.2, 0.8)
+        # EUR info (reference only, not a requirement)
+        if eur_watermark > 0 and improvement_pct != 0:
+            hints.append(f"EUR {improvement_pct:+.2f}% vs last exit")
 
         # Trend hints
         if trend_direction == "downcycle":
@@ -1567,13 +1550,12 @@ class ETHEURBot:
         """Print startup header"""
         print(f"""
 ╔══════════════════════════════════════════════════════════════════════════╗
-║           ALPHA ARENA - ETH/EUR DUAL WATERMARK LADDER TRADER             ║
+║           ALPHA ARENA - ETH WATERMARK ACCUMULATION TRADER                ║
 ╠══════════════════════════════════════════════════════════════════════════╣
-║  Strategy: STRICT Dual Watermark Enforcement (ETH + EUR)                 ║
-║  Starting: {self.config.initial_eth} ETH | Goal: Accumulate ETH + Preserve EUR Value        ║
-║  ETH Watermark: STRICT 0.1%+ | EUR Watermark: STRICT 0.1%+              ║
-║  Stop Loss: €2,000 max loss | Emergency Re-entry: RSI <20               ║
-║  Cycle Indicators: BTC Price Levels                                      ║
+║  Strategy: STRICT ETH Watermark | Grok-Driven EUR Exits                 ║
+║  Starting: {self.config.initial_eth} ETH | Goal: Accumulate More ETH                        ║
+║  ETH Watermark: STRICT (cycle-based) | EUR Watermark: Reference Only    ║
+║  Stop Loss: €2,000 max loss | Cycle Indicators: BTC Price Levels        ║
 ║  AI: Grok + Newsletter Context | Notifications: iMessage                 ║
 ║  📰 To add newsletter: Create newsletter.txt file during operation       ║
 ╚══════════════════════════════════════════════════════════════════════════╝""")
@@ -1942,11 +1924,10 @@ class ETHEURBot:
         else:
             print(f"   {self.current_position.quantity:.6f} ETH @ €{eth_price:,.2f}")
         
-        print(f"\n🏔️ WATERMARKS (BOTH STRICT):")
-        print(f"   ETH: {self.watermark.get():.6f} ETH (must beat by {min_improvement*100:.3f}%+)")
+        print(f"\n🏔️ WATERMARKS:")
+        print(f"   ETH: {self.watermark.get():.6f} ETH (STRICT: must beat by {min_improvement*100:.3f}%+)")
         if self.watermark.get_eur() > 0:
-            eur_min = self.config.eur_reentry_improvement * 100
-            print(f"   EUR: €{self.watermark.get_eur():,.2f} (must beat by {eur_min:.1f}%+)")
+            print(f"   EUR: €{self.watermark.get_eur():,.2f} (reference only)")
 
         # Show newsletter status
         newsletters = self.get_recent_newsletters(7)
