@@ -2016,12 +2016,13 @@ class ETHEURBot:
                     start_time = datetime.fromisoformat(self.eth_entry_consensus_start)
                     elapsed_minutes = (now - start_time).total_seconds() / 60
 
-                    if elapsed_minutes >= 5.0:
-                        # Analyze consensus
-                        total_checks = len(self.eth_entry_decisions)
-                        buy_votes = len([d for d in self.eth_entry_decisions if d["decision"] == "BUY"])
-                        buy_pct = (buy_votes / total_checks * 100) if total_checks > 0 else 0
+                    # Calculate current consensus status
+                    total_checks = len(self.eth_entry_decisions)
+                    buy_votes = len([d for d in self.eth_entry_decisions if d["decision"] == "BUY"])
+                    buy_pct = (buy_votes / total_checks * 100) if total_checks > 0 else 0
 
+                    if elapsed_minutes >= 5.0:
+                        # Analyze final consensus
                         print(f"\n   📊 EUR→ETH CONSENSUS COMPLETE:")
                         print(f"      Duration: {elapsed_minutes:.1f} minutes")
                         print(f"      Grok checks: {total_checks}")
@@ -2066,11 +2067,13 @@ class ETHEURBot:
                         start_time = datetime.fromisoformat(self.eth_entry_consensus_start)
                         elapsed_minutes = (now - start_time).total_seconds() / 60
 
-                        if elapsed_minutes >= 5.0:
-                            total_checks = len(self.eth_entry_decisions)
-                            buy_votes = len([d for d in self.eth_entry_decisions if d["decision"] == "BUY"])
-                            buy_pct = (buy_votes / total_checks * 100) if total_checks > 0 else 0
+                        # Calculate current consensus status
+                        total_checks = len(self.eth_entry_decisions)
+                        buy_votes = len([d for d in self.eth_entry_decisions if d["decision"] == "BUY"])
+                        buy_pct = (buy_votes / total_checks * 100) if total_checks > 0 else 0
 
+                        if elapsed_minutes >= 5.0:
+                            # Final consensus: HOLD
                             print(f"\n   📊 EUR→ETH CONSENSUS COMPLETE:")
                             print(f"      Duration: {elapsed_minutes:.1f} minutes")
                             print(f"      Grok checks: {total_checks}")
