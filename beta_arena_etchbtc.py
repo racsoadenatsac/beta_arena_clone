@@ -52,8 +52,8 @@ class Config:
     min_improvement_late_bull: float = 0.0015      # 0.15% - Late cycle (reduced from 0.5%)
     min_improvement_euphoria: float = 0.01         # 1% - Top signals
     
-    # Fees (Kraken)
-    fee_rate: float = 0.0026  # 0.26%
+    # Fees (Kraken maker fees - use limit orders)
+    fee_rate: float = 0.0016  # 0.16% maker fee
     
     # EUR strategy
     eur_reentry_improvement: float = 0.001  # Need 0.1% improvement for re-entry
@@ -1269,10 +1269,10 @@ class GrokTrader:
                 now = datetime.now()
                 minutes_since_last_trade = (now - last_trade_time).total_seconds() / 60
 
-                # CRITICAL: Minimum time buffer between trades (5 minutes)
-                # NO EXCEPTIONS - all trades must wait
-                if minutes_since_last_trade < 5.0:
-                    print(f"      ⏸️ TRADE COOLDOWN: Last trade {minutes_since_last_trade:.1f} min ago (min: 5 min)")
+                # CRITICAL: Minimum time buffer between trades (30 minutes for maker orders)
+                # Ensures limit orders have time to fill at maker fee rates
+                if minutes_since_last_trade < 30.0:
+                    print(f"      ⏸️ TRADE COOLDOWN: Last trade {minutes_since_last_trade:.1f} min ago (min: 30 min)")
                     print(f"         Last trade: {recent_trades[0]['from_asset']}→{recent_trades[0]['to_asset']}")
 
                     # Show what opportunities were blocked
