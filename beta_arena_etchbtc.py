@@ -785,6 +785,8 @@ class ETHEUROpportunityDetector:
         eth_price = market["ETH"].price
         eur_entry_value = state.get("eur_entry_value")
         stop_loss_threshold = state.get("stop_loss_threshold", 5000.0)
+        daily_eth_high = state.get("daily_eth_high")
+        daily_eth_low = state.get("daily_eth_low")
 
         # Get cycle-adjusted minimum improvement
         min_improvement = self.cycle_analyzer.get_minimum_improvement(btc_price, market_info)
@@ -805,7 +807,8 @@ class ETHEUROpportunityDetector:
         elif current_asset == "ETH":
             # Check for EUR exit signals
             exit_ops = self._detect_eur_exit(
-                market, profit_pct, btc_price, eth_price, portfolio_value, eur_watermark, market_info
+                market, profit_pct, btc_price, eth_price, portfolio_value, eur_watermark, market_info,
+                daily_eth_high, daily_eth_low
             )
             opportunities.extend(exit_ops)
             
@@ -822,7 +825,8 @@ class ETHEUROpportunityDetector:
     
     def _detect_eur_exit(self, market: Dict, profit_pct: float,
                         btc_price: float, eth_price: float, portfolio_value: float,
-                        eur_watermark: float, market_info: Dict) -> List[TradeOpportunity]:
+                        eur_watermark: float, market_info: Dict,
+                        daily_eth_high: Optional[float], daily_eth_low: Optional[float]) -> List[TradeOpportunity]:
         """Detect opportunities to exit to EUR (STRICT EUR watermark enforcement)
 
         Only returns opportunities if EUR watermark can be beaten by min_eur_improvement (0.1%).
@@ -911,21 +915,21 @@ class ETHEUROpportunityDetector:
         # PRICE FILTER: Only exit at or above day's midpoint
         # ========================================================================
         # After entering ETH, wait for price to reach halfway between daily high/low
-        if self.daily_eth_high is not None and self.daily_eth_low is not None:
-            daily_midpoint = (self.daily_eth_high + self.daily_eth_low) / 2
+        if daily_eth_high is not None and daily_eth_low is not None:
+            daily_midpoint = (daily_eth_high + daily_eth_low) / 2
             price_vs_midpoint = ((eth_price - daily_midpoint) / daily_midpoint) * 100
 
             if eth_price < daily_midpoint:
                 # Price below midpoint - wait for better exit
                 print(f"      🔍 Hold/Exit Analysis: {trend_direction.upper()} ({trend_strength}) - Profit: {profit_pct:+.2f}%{market_hours_note}")
-                print(f"         💰 Price: €{eth_price:,.2f} | Day's range: €{self.daily_eth_low:,.2f} - €{self.daily_eth_high:,.2f}")
+                print(f"         💰 Price: €{eth_price:,.2f} | Day's range: €{daily_eth_low:,.2f} - €{daily_eth_high:,.2f}")
                 print(f"         ⏸️ Below midpoint €{daily_midpoint:,.2f} ({price_vs_midpoint:+.2f}%)")
                 print(f"         Waiting for price to reach or exceed midpoint before creating exit opportunity")
                 return opportunities  # Return empty - no opportunity yet
 
             # Price at or above midpoint - can create exit opportunity
             print(f"      💰 Price: €{eth_price:,.2f} ✓ At/above midpoint €{daily_midpoint:,.2f} ({price_vs_midpoint:+.2f}%)")
-            print(f"      Day's range: €{self.daily_eth_low:,.2f} - €{self.daily_eth_high:,.2f}")
+            print(f"      Day's range: €{daily_eth_low:,.2f} - €{daily_eth_high:,.2f}")
 
         # ========================================================================
         # EUR WATERMARK - Track for reference only (NOT enforced)
@@ -2006,7 +2010,9 @@ class ETHEURBot:
             "eur_watermark": self.watermark.get_eur(),
             "eur_entry_value": self.eur_entry_value,
             "stop_loss_threshold": self.stop_loss_threshold,
-            "market": market
+            "market": market,
+            "daily_eth_high": self.daily_eth_high,
+            "daily_eth_low": self.daily_eth_low
         }
         
         opportunities = self.opportunity_detector.detect_opportunities(state, market_info)
