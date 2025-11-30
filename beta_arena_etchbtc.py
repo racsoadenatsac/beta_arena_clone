@@ -992,10 +992,15 @@ class ETHEUROpportunityDetector:
                 hints.append(f"Oversold RSI {rsi:.0f}")
                 confidence = max(confidence - 0.15, 0.2)
 
-        # Profit hints
+        # Profit hints - check against 0.52% threshold
+        roundtrip_threshold = 0.52  # Need to beat both entry and exit fees
         if profit_pct > 2.0:
             hints.append(f"Good profit {profit_pct:+.2f}%")
             confidence = min(confidence + 0.1, 0.8)
+        elif profit_pct > roundtrip_threshold:
+            # Exceeds threshold - signal to Grok this is acceptable
+            hints.append(f"Profit {profit_pct:+.2f}% exceeds threshold {roundtrip_threshold:.2f}% - acceptable exit")
+            confidence = min(confidence + 0.05, 0.7)
         elif profit_pct < -1.0:
             hints.append(f"Loss {profit_pct:+.2f}%")
 
@@ -1027,6 +1032,12 @@ class ETHEUROpportunityDetector:
             }
         ))
         print(f"      🔍 Hold/Exit Analysis: {trend_direction.upper()} ({trend_strength}) - Profit: {profit_pct:+.2f}%{market_hours_note}")
+        # Show threshold status
+        if profit_pct > roundtrip_threshold:
+            print(f"         ✅ Profit ({profit_pct:+.2f}%) exceeds threshold ({roundtrip_threshold:.2f}%) - acceptable exit")
+        else:
+            print(f"         ⚠️ Profit ({profit_pct:+.2f}%) below threshold ({roundtrip_threshold:.2f}%) - marginal")
+        print(f"         Price changes: {trend_summary}")
         rsi_text = f"{rsi:.0f}" if rsi else "N/A"
         if eur_watermark > 0:
             eur_wm_status = f"✅ CAN beat (+{improvement_pct:.2f}%)"
