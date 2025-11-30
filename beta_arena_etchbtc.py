@@ -1736,6 +1736,16 @@ class ETHEURBot:
         if not self.market.history_loaded:
             self.market.load_historical_data(hours=6)
 
+        # Populate eth_price_history with historical data (estimate timestamps)
+        # Assume 1-minute intervals working backwards from now
+        now = datetime.now()
+        eth_history = list(self.market.price_history["ETH"])
+        for i, price in enumerate(eth_history):
+            # Calculate timestamp: oldest data is furthest back
+            minutes_ago = len(eth_history) - i - 1
+            timestamp = now - timedelta(minutes=minutes_ago)
+            self.eth_price_history.append((timestamp, price))
+
         print("\n🔄 Fetching current market prices...")
         market = self.market.fetch()
 
