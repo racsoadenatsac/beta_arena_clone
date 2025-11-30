@@ -335,14 +335,16 @@ class IMessageNotifier:
         message += f"      Type: {trade_type}\n"
         message += f"      Value: €{value:,.2f} | Fee: €{fee:.2f}\n"
 
-        # Always show both positions
+        # Always show both positions in equivalence
         if to_asset == "EUR":
-            # Just sold ETH for EUR
+            # Just sold ETH for EUR - show EUR and equivalent ETH value
+            equivalent_eth = new_qty / eth_price if eth_price > 0 else 0
             message += f"      New Position EUR: €{new_qty:,.2f} (EUR)\n"
-            message += f"      New Position ETH: 0.000000 (ETH)\n"
+            message += f"      New Position ETH: {equivalent_eth:.6f} (ETH)\n"
         else:
-            # Just bought ETH with EUR
-            message += f"      New Position EUR: €0.00 (EUR)\n"
+            # Just bought ETH with EUR - show ETH and equivalent EUR value
+            equivalent_eur = new_qty * new_price
+            message += f"      New Position EUR: €{equivalent_eur:,.2f} (EUR)\n"
             message += f"      New Position ETH: {new_qty:.6f} (ETH)\n"
 
         message += f"      Reason: {reasoning}"
@@ -862,16 +864,16 @@ class ETHEUROpportunityDetector:
             trend_summary = f"1h: {change_1h:+.2f}%, 3h: {change_3h:+.2f}%, 6h: {change_6h:+.2f}%"
 
             # Initial exit: Create opportunity based on trend analysis, let Grok decide
-            # Signal to Grok if profit exceeds transaction fee (0.26%)
-            fee_pct = self.config.fee_rate * 100  # 0.26%
-            exceeds_fee = profit_pct > fee_pct
+            # Signal to Grok if profit exceeds round-trip fee (0.52% = 2x 0.26%)
+            roundtrip_threshold = 0.52  # Need to beat both entry and exit fees
+            exceeds_threshold = profit_pct > roundtrip_threshold
 
             print(f"      🔍 Initial Exit Analysis: {trend_direction.upper()} ({trend_strength}) - Profit: {profit_pct:+.2f}%{market_hours_note}")
             print(f"         Price changes: {trend_summary}")
-            if exceeds_fee:
-                print(f"         ✅ Profit ({profit_pct:+.2f}%) exceeds fee ({fee_pct:.2f}%) - acceptable exit")
+            if exceeds_threshold:
+                print(f"         ✅ Profit ({profit_pct:+.2f}%) exceeds threshold ({roundtrip_threshold:.2f}%) - acceptable exit")
             else:
-                print(f"         ⚠️ Profit ({profit_pct:+.2f}%) below fee ({fee_pct:.2f}%) - would lose money")
+                print(f"         ⚠️ Profit ({profit_pct:+.2f}%) below threshold ({roundtrip_threshold:.2f}%) - marginal")
             print(f"         Creating opportunity for Grok to evaluate market conditions")
 
             # Create opportunity for Grok to decide
@@ -884,9 +886,9 @@ class ETHEUROpportunityDetector:
             elif profit_pct > 1.0:
                 confidence = 0.7
                 hint = f"Good profit opportunity ({profit_pct:.2f}%)"
-            elif exceeds_fee:
-                # Profit exceeds fee - signal this is acceptable, but let Grok decide
-                hint = f"Profit {profit_pct:+.2f}% exceeds fee {fee_pct:.2f}% - acceptable exit, your decision"
+            elif exceeds_threshold:
+                # Profit exceeds round-trip threshold - signal this is acceptable, but let Grok decide
+                hint = f"Profit {profit_pct:+.2f}% exceeds threshold {roundtrip_threshold:.2f}% - acceptable exit, your decision"
             else:
                 hint = f"Current profit: {profit_pct:+.2f}%"
 
@@ -1877,11 +1879,15 @@ class ETHEURBot:
         print(f"      Type: {opportunity.type}")
         print(f"      Value: €{old_value:,.2f} | Fee: €{fee:.2f}")
 
-        # Always show both positions
+        # Get current ETH price for equivalence calculation
+        eth_price = market["ETH"].price
+
+        # Always show both positions in equivalence
         if to_asset == "EUR":
-            # Just sold ETH for EUR
+            # Just sold ETH for EUR - show EUR and equivalent ETH value
+            equivalent_eth = new_qty / eth_price if eth_price > 0 else 0
             print(f"      New Position EUR: €{new_qty:,.2f} (EUR)")
-            print(f"      New Position ETH: 0.000000 (ETH)")
+            print(f"      New Position ETH: {equivalent_eth:.6f} (ETH)")
             if eur_watermark_updated:
                 print(f"      💶 NEW EUR WATERMARK: €{new_qty:,.2f}")
             elif self.watermark.get_eur() > 0:
@@ -1891,8 +1897,9 @@ class ETHEURBot:
                 else:
                     print(f"      ⚠️ EUR: {eur_ratio*100:.1f}% of watermark (€{self.watermark.get_eur():,.2f})")
         else:
-            # Just bought ETH with EUR
-            print(f"      New Position EUR: €0.00 (EUR)")
+            # Just bought ETH with EUR - show ETH and equivalent EUR value
+            equivalent_eur = new_qty * new_price
+            print(f"      New Position EUR: €{equivalent_eur:,.2f} (EUR)")
             print(f"      New Position ETH: {new_qty:.6f} (ETH)")
             if watermark_updated:
                 print(f"      🏔️ NEW ETH WATERMARK: {new_qty:.6f} ETH (+{improvement*100:.3f}%)")
