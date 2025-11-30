@@ -790,8 +790,8 @@ class ETHEUROpportunityDetector:
         eth_price = market["ETH"].price
         eur_entry_value = state.get("eur_entry_value")
         stop_loss_threshold = state.get("stop_loss_threshold", 5000.0)
-        daily_eth_high = state.get("daily_eth_high")
-        daily_eth_low = state.get("daily_eth_low")
+        eth_6h_high = state.get("eth_6h_high")
+        eth_6h_low = state.get("eth_6h_low")
 
         # Get cycle-adjusted minimum improvement
         min_improvement = self.cycle_analyzer.get_minimum_improvement(btc_price, market_info)
@@ -813,7 +813,7 @@ class ETHEUROpportunityDetector:
             # Check for EUR exit signals
             exit_ops = self._detect_eur_exit(
                 market, profit_pct, btc_price, eth_price, portfolio_value, eur_watermark, market_info,
-                daily_eth_high, daily_eth_low
+                eth_6h_high, eth_6h_low
             )
             opportunities.extend(exit_ops)
             
@@ -831,7 +831,7 @@ class ETHEUROpportunityDetector:
     def _detect_eur_exit(self, market: Dict, profit_pct: float,
                         btc_price: float, eth_price: float, portfolio_value: float,
                         eur_watermark: float, market_info: Dict,
-                        daily_eth_high: Optional[float], daily_eth_low: Optional[float]) -> List[TradeOpportunity]:
+                        eth_6h_high: Optional[float], eth_6h_low: Optional[float]) -> List[TradeOpportunity]:
         """Detect opportunities to exit to EUR (STRICT EUR watermark enforcement)
 
         Only returns opportunities if EUR watermark can be beaten by min_eur_improvement (0.1%).
@@ -927,24 +927,24 @@ class ETHEUROpportunityDetector:
         trend_summary = f"1h: {change_1h:+.2f}%, 3h: {change_3h:+.2f}%, 6h: {change_6h:+.2f}%"
 
         # ========================================================================
-        # PRICE FILTER: Only exit at or above day's midpoint
+        # PRICE FILTER: Only exit at or above 6h midpoint
         # ========================================================================
-        # After entering ETH, wait for price to reach halfway between daily high/low
-        if daily_eth_high is not None and daily_eth_low is not None:
-            daily_midpoint = (daily_eth_high + daily_eth_low) / 2
-            price_vs_midpoint = ((eth_price - daily_midpoint) / daily_midpoint) * 100
+        # After entering ETH, wait for price to reach halfway between 6h high/low
+        if eth_6h_high is not None and eth_6h_low is not None:
+            midpoint_6h = (eth_6h_high + eth_6h_low) / 2
+            price_vs_midpoint = ((eth_price - midpoint_6h) / midpoint_6h) * 100
 
-            if eth_price < daily_midpoint:
+            if eth_price < midpoint_6h:
                 # Price below midpoint - wait for better exit
                 print(f"      🔍 Hold/Exit Analysis: {trend_direction.upper()} ({trend_strength}) - Profit: {profit_pct:+.2f}%{market_hours_note}")
-                print(f"         💰 Price: €{eth_price:,.2f} | Day's range: €{daily_eth_low:,.2f} - €{daily_eth_high:,.2f}")
-                print(f"         ⏸️ Below midpoint €{daily_midpoint:,.2f} ({price_vs_midpoint:+.2f}%)")
+                print(f"         💰 Price: €{eth_price:,.2f} | 6h range: €{eth_6h_low:,.2f} - €{eth_6h_high:,.2f}")
+                print(f"         ⏸️ Below midpoint €{midpoint_6h:,.2f} ({price_vs_midpoint:+.2f}%)")
                 print(f"         Waiting for price to reach or exceed midpoint before creating exit opportunity")
                 return opportunities  # Return empty - no opportunity yet
 
             # Price at or above midpoint - can create exit opportunity
-            print(f"      💰 Price: €{eth_price:,.2f} ✓ At/above midpoint €{daily_midpoint:,.2f} ({price_vs_midpoint:+.2f}%)")
-            print(f"      Day's range: €{daily_eth_low:,.2f} - €{daily_eth_high:,.2f}")
+            print(f"      💰 Price: €{eth_price:,.2f} ✓ At/above midpoint €{midpoint_6h:,.2f} ({price_vs_midpoint:+.2f}%)")
+            print(f"      6h range: €{eth_6h_low:,.2f} - €{eth_6h_high:,.2f}")
 
         # ========================================================================
         # EUR WATERMARK - Track for reference only (NOT enforced)
@@ -1577,10 +1577,8 @@ class ETHEURBot:
         self.eth_entry_decisions: List[Dict] = []  # Store Grok decisions for EUR→ETH
         self.eth_entry_consensus_start: Optional[str] = None  # When we started collecting
 
-        # Daily price tracking for ETH exit strategy
-        self.daily_eth_high: Optional[float] = None  # Day's high price
-        self.daily_eth_low: Optional[float] = None   # Day's low price
-        self.last_date: Optional[str] = None         # Track date changes
+        # 6-hour price tracking for ETH exit strategy
+        self.eth_price_history: List[Tuple[datetime, float]] = []  # (timestamp, price) tuples for 6h window
 
         # Database - must be initialized before creating AI trader
         self.db_name = f"eth_eur_{config.bot_name.lower()}.db"
@@ -1960,19 +1958,22 @@ class ETHEURBot:
         cycle_phase = cycle_analyzer.get_cycle_phase(btc_price)
         min_improvement = cycle_analyzer.get_minimum_improvement(btc_price, market_info)
 
-        # Track daily high/low for ETH exit strategy
-        current_date = datetime.now().strftime('%Y-%m-%d')
-        if self.last_date != current_date:
-            # New day - reset tracking
-            self.daily_eth_high = eth_price
-            self.daily_eth_low = eth_price
-            self.last_date = current_date
+        # Track 6-hour high/low for ETH exit strategy
+        now = datetime.now()
+        self.eth_price_history.append((now, eth_price))
+
+        # Keep only last 6 hours of data
+        six_hours_ago = now - timedelta(hours=6)
+        self.eth_price_history = [(ts, price) for ts, price in self.eth_price_history if ts > six_hours_ago]
+
+        # Calculate high/low from 6-hour window
+        if self.eth_price_history:
+            prices = [price for _, price in self.eth_price_history]
+            eth_6h_high = max(prices)
+            eth_6h_low = min(prices)
         else:
-            # Update high/low
-            if self.daily_eth_high is None or eth_price > self.daily_eth_high:
-                self.daily_eth_high = eth_price
-            if self.daily_eth_low is None or eth_price < self.daily_eth_low:
-                self.daily_eth_low = eth_price
+            eth_6h_high = eth_price
+            eth_6h_low = eth_price
         
         print(f"\n{'='*70}")
         print(f"🏔️ ETH/EUR TRADER - {datetime.now().strftime('%H:%M:%S')}")
@@ -2046,8 +2047,8 @@ class ETHEURBot:
             "eur_entry_value": self.eur_entry_value,
             "stop_loss_threshold": self.stop_loss_threshold,
             "market": market,
-            "daily_eth_high": self.daily_eth_high,
-            "daily_eth_low": self.daily_eth_low
+            "eth_6h_high": eth_6h_high,
+            "eth_6h_low": eth_6h_low
         }
         
         opportunities = self.opportunity_detector.detect_opportunities(state, market_info)
