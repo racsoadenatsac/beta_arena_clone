@@ -52,8 +52,8 @@ class Config:
     min_improvement_late_bull: float = 0.0015      # 0.15% - Late cycle (reduced from 0.5%)
     min_improvement_euphoria: float = 0.01         # 1% - Top signals
     
-    # Fees (Kraken maker fees - use limit orders)
-    fee_rate: float = 0.0016  # 0.16% maker fee
+    # Fees (Kraken taker fees - market orders)
+    fee_rate: float = 0.0026  # 0.26% taker fee
     
     # EUR strategy
     eur_reentry_improvement: float = 0.001  # Need 0.1% improvement for re-entry
@@ -335,12 +335,15 @@ class IMessageNotifier:
         message += f"      Type: {trade_type}\n"
         message += f"      Value: €{value:,.2f} | Fee: €{fee:.2f}\n"
 
+        # Always show both positions
         if to_asset == "EUR":
-            # Holding EUR position
-            message += f"      New Position: €{new_qty:,.2f} (EUR)\n"
+            # Just sold ETH for EUR
+            message += f"      New Position EUR: €{new_qty:,.2f} (EUR)\n"
+            message += f"      New Position ETH: 0.000000 (ETH)\n"
         else:
-            # Holding ETH position
-            message += f"      New Position: {new_qty:.6f} ETH @ €{new_price:,.2f}\n"
+            # Just bought ETH with EUR
+            message += f"      New Position EUR: €0.00 (EUR)\n"
+            message += f"      New Position ETH: {new_qty:.6f} (ETH)\n"
 
         message += f"      Reason: {reasoning}"
 
@@ -859,9 +862,16 @@ class ETHEUROpportunityDetector:
             trend_summary = f"1h: {change_1h:+.2f}%, 3h: {change_3h:+.2f}%, 6h: {change_6h:+.2f}%"
 
             # Initial exit: Create opportunity based on trend analysis, let Grok decide
-            # Transaction fee (0.26%) will be covered automatically from proceeds
+            # Signal to Grok if profit exceeds transaction fee (0.26%)
+            fee_pct = self.config.fee_rate * 100  # 0.26%
+            exceeds_fee = profit_pct > fee_pct
+
             print(f"      🔍 Initial Exit Analysis: {trend_direction.upper()} ({trend_strength}) - Profit: {profit_pct:+.2f}%{market_hours_note}")
             print(f"         Price changes: {trend_summary}")
+            if exceeds_fee:
+                print(f"         ✅ Profit ({profit_pct:+.2f}%) exceeds fee ({fee_pct:.2f}%) - acceptable exit")
+            else:
+                print(f"         ⚠️ Profit ({profit_pct:+.2f}%) below fee ({fee_pct:.2f}%) - would lose money")
             print(f"         Creating opportunity for Grok to evaluate market conditions")
 
             # Create opportunity for Grok to decide
@@ -874,6 +884,9 @@ class ETHEUROpportunityDetector:
             elif profit_pct > 1.0:
                 confidence = 0.7
                 hint = f"Good profit opportunity ({profit_pct:.2f}%)"
+            elif exceeds_fee:
+                # Profit exceeds fee - signal this is acceptable, but let Grok decide
+                hint = f"Profit {profit_pct:+.2f}% exceeds fee {fee_pct:.2f}% - acceptable exit, your decision"
             else:
                 hint = f"Current profit: {profit_pct:+.2f}%"
 
@@ -1293,8 +1306,8 @@ class GrokTrader:
                 now = datetime.now()
                 minutes_since_last_trade = (now - last_trade_time).total_seconds() / 60
 
-                # CRITICAL: Minimum time buffer between trades (30 minutes for maker orders)
-                # Ensures limit orders have time to fill at maker fee rates
+                # CRITICAL: Minimum time buffer between trades (30 minutes)
+                # Prevents overtrading and allows trends to develop
                 if minutes_since_last_trade < 30.0:
                     print(f"      ⏸️ TRADE COOLDOWN: Last trade {minutes_since_last_trade:.1f} min ago (min: 30 min)")
                     print(f"         Last trade: {recent_trades[0]['from_asset']}→{recent_trades[0]['to_asset']}")
@@ -1863,11 +1876,13 @@ class ETHEURBot:
         print(f"\n   {trade_icon} {trade_label}: {from_asset} → {to_asset}")
         print(f"      Type: {opportunity.type}")
         print(f"      Value: €{old_value:,.2f} | Fee: €{fee:.2f}")
-        
+
+        # Always show both positions
         if to_asset == "EUR":
-            print(f"      New Position: €{new_qty:,.2f}")
+            # Just sold ETH for EUR
+            print(f"      New Position EUR: €{new_qty:,.2f} (EUR)")
+            print(f"      New Position ETH: 0.000000 (ETH)")
             if eur_watermark_updated:
-                old_eur = self.watermark.get_eur() / (new_qty / (self.watermark.get_eur() if self.watermark.get_eur() > 0 else new_qty))
                 print(f"      💶 NEW EUR WATERMARK: €{new_qty:,.2f}")
             elif self.watermark.get_eur() > 0:
                 eur_ratio = new_qty / self.watermark.get_eur()
@@ -1876,7 +1891,9 @@ class ETHEURBot:
                 else:
                     print(f"      ⚠️ EUR: {eur_ratio*100:.1f}% of watermark (€{self.watermark.get_eur():,.2f})")
         else:
-            print(f"      New Position: {new_qty:.6f} ETH @ €{new_price:,.2f}")
+            # Just bought ETH with EUR
+            print(f"      New Position EUR: €0.00 (EUR)")
+            print(f"      New Position ETH: {new_qty:.6f} (ETH)")
             if watermark_updated:
                 print(f"      🏔️ NEW ETH WATERMARK: {new_qty:.6f} ETH (+{improvement*100:.3f}%)")
             elif is_stop_loss:
@@ -1886,7 +1903,7 @@ class ETHEURBot:
                     print(f"      🚨 STOP LOSS: {new_qty:.6f} ETH ({deficit:.2f}% below watermark - emergency safety trade)")
                 else:
                     print(f"      🚨 STOP LOSS: Emergency return to ETH (safe position)")
-        
+
         print(f"      Reason: {opportunity.reasoning}")
         
         # Send notification
