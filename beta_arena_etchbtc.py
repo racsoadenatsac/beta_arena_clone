@@ -1816,7 +1816,51 @@ class ETHEURBot:
 
         # Return in chronological order (most recent first)
         return trades
-    
+
+    def confirm_trade(self, opportunity: TradeOpportunity, market: Dict[str, MarketData]) -> bool:
+        """Prompt user to confirm trade execution"""
+        from_asset = opportunity.from_asset
+        to_asset = opportunity.to_asset
+
+        # Calculate trade details
+        old_value = self.calculate_portfolio_value(market)
+        fee = old_value * self.config.fee_rate
+
+        if to_asset == "EUR":
+            new_qty = old_value * (1 - self.config.fee_rate)
+            eth_price = market["ETH"].price
+            equivalent_eth = new_qty / eth_price if eth_price > 0 else 0
+            print(f"\n╔══════════════════════════════════════════════════════════════╗")
+            print(f"║  TRADE CONFIRMATION: {from_asset} → {to_asset}")
+            print(f"╠══════════════════════════════════════════════════════════════╣")
+            print(f"║  Type: {opportunity.type}")
+            print(f"║  Value: €{old_value:,.2f} | Fee: €{fee:.2f}")
+            print(f"║  New Position EUR: €{new_qty:,.2f} (EUR)")
+            print(f"║  New Position ETH: {equivalent_eth:.6f} (ETH)")
+            print(f"║  Reason: {opportunity.reasoning}")
+            print(f"╚══════════════════════════════════════════════════════════════╝")
+        else:  # ETH
+            new_price = market["ETH"].ask
+            new_qty = (old_value * (1 - self.config.fee_rate)) / new_price
+            equivalent_eur = new_qty * new_price
+            print(f"\n╔══════════════════════════════════════════════════════════════╗")
+            print(f"║  TRADE CONFIRMATION: {from_asset} → {to_asset}")
+            print(f"╠══════════════════════════════════════════════════════════════╣")
+            print(f"║  Type: {opportunity.type}")
+            print(f"║  Value: €{old_value:,.2f} | Fee: €{fee:.2f}")
+            print(f"║  New Position EUR: €{equivalent_eur:,.2f} (EUR)")
+            print(f"║  New Position ETH: {new_qty:.6f} (ETH)")
+            print(f"║  Reason: {opportunity.reasoning}")
+            print(f"╚══════════════════════════════════════════════════════════════╝")
+
+        # Prompt for confirmation
+        try:
+            response = input("\n   Execute this trade? (y/n): ").strip().lower()
+            return response == 'y'
+        except (EOFError, KeyboardInterrupt):
+            print("\n   Trade cancelled by user")
+            return False
+
     def execute_trade(self, opportunity: TradeOpportunity, market: Dict[str, MarketData]) -> bool:
         """Execute trade"""
         if not self.current_position or not opportunity:
@@ -2123,7 +2167,12 @@ class ETHEURBot:
                         if buy_pct >= 60:
                             print(f"      ✅ CONSENSUS: BUY ({buy_pct:.0f}% agreement)")
                             print(f"\n   🤖 Executing consensus decision...")
-                            self.execute_trade(selected, market)
+
+                            # Confirm trade with user
+                            if self.confirm_trade(selected, market):
+                                self.execute_trade(selected, market)
+                            else:
+                                print(f"   ❌ Trade cancelled by user")
                         else:
                             print(f"      ⏸️ CONSENSUS: HOLD ({buy_pct:.0f}% agreement - need 60%+)")
 
@@ -2138,7 +2187,12 @@ class ETHEURBot:
                 # ETH→EUR exits: Execute immediately (no consensus needed)
                 else:
                     print(f"\n   🤖 Executing Grok's decision...")
-                    self.execute_trade(selected, market)
+
+                    # Confirm trade with user
+                    if self.confirm_trade(selected, market):
+                        self.execute_trade(selected, market)
+                    else:
+                        print(f"   ❌ Trade cancelled by user")
             else:
                 print(f"   ⏸️ HOLD")
 
