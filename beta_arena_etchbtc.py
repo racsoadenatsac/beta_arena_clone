@@ -1818,7 +1818,9 @@ class ETHEURBot:
         return trades
 
     def confirm_trade(self, opportunity: TradeOpportunity, market: Dict[str, MarketData]) -> bool:
-        """Prompt user to confirm trade execution"""
+        """Prompt user to confirm trade execution with 30-second timeout"""
+        import select
+
         from_asset = opportunity.from_asset
         to_asset = opportunity.to_asset
 
@@ -1853,13 +1855,37 @@ class ETHEURBot:
             print(f"║  Reason: {opportunity.reasoning}")
             print(f"╚══════════════════════════════════════════════════════════════╝")
 
-        # Prompt for confirmation
+        # Prompt for confirmation with 30-second timeout
         try:
-            response = input("\n   Execute this trade? (y/n): ").strip().lower()
-            return response == 'y'
+            print("\n   Execute this trade? (y/n) [30s timeout]: ", end='', flush=True)
+
+            # Wait for input with timeout
+            ready, _, _ = select.select([sys.stdin], [], [], 30.0)
+
+            if ready:
+                response = sys.stdin.readline().strip().lower()
+                if response == 'y':
+                    return True
+                else:
+                    print("   Trade cancelled")
+                    return False
+            else:
+                # Timeout - no response
+                print("timeout - continuing without trade")
+                return False
+
         except (EOFError, KeyboardInterrupt):
             print("\n   Trade cancelled by user")
             return False
+        except Exception as e:
+            # If select is not available (e.g., Windows), fall back to simple input
+            print(f"\n   (Timeout not available on this system)")
+            try:
+                response = input("   Execute this trade? (y/n): ").strip().lower()
+                return response == 'y'
+            except (EOFError, KeyboardInterrupt):
+                print("\n   Trade cancelled by user")
+                return False
 
     def execute_trade(self, opportunity: TradeOpportunity, market: Dict[str, MarketData]) -> bool:
         """Execute trade"""
