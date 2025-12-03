@@ -2194,11 +2194,8 @@ class ETHEURBot:
                             print(f"      ✅ CONSENSUS: BUY ({buy_pct:.0f}% agreement)")
                             print(f"\n   🤖 Executing consensus decision...")
 
-                            # Confirm trade with user
-                            if self.confirm_trade(selected, market):
-                                self.execute_trade(selected, market)
-                            else:
-                                print(f"   ❌ Trade cancelled by user")
+                            # Execute trade autonomously
+                            self.execute_trade(selected, market)
                         else:
                             print(f"      ⏸️ CONSENSUS: HOLD ({buy_pct:.0f}% agreement - need 60%+)")
 
@@ -2214,11 +2211,8 @@ class ETHEURBot:
                 else:
                     print(f"\n   🤖 Executing Grok's decision...")
 
-                    # Confirm trade with user
-                    if self.confirm_trade(selected, market):
-                        self.execute_trade(selected, market)
-                    else:
-                        print(f"   ❌ Trade cancelled by user")
+                    # Execute trade autonomously
+                    self.execute_trade(selected, market)
             else:
                 print(f"   ⏸️ HOLD")
 
