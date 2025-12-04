@@ -992,14 +992,14 @@ class ETHEUROpportunityDetector:
                 hints.append(f"Oversold RSI {rsi:.0f}")
                 confidence = max(confidence - 0.15, 0.2)
 
-        # Profit hints - check against 0.52% threshold
-        roundtrip_threshold = 0.52  # Need to beat both entry and exit fees
+        # Profit hints - check against 0.26% threshold (cover this trade's fee)
+        fee_threshold = 0.26  # Cover this transaction's fee
         if profit_pct > 2.0:
             hints.append(f"Good profit {profit_pct:+.2f}%")
             confidence = min(confidence + 0.1, 0.8)
-        elif profit_pct > roundtrip_threshold:
-            # Exceeds threshold - signal to Grok this is acceptable
-            hints.append(f"Profit {profit_pct:+.2f}% exceeds threshold {roundtrip_threshold:.2f}% - acceptable exit")
+        elif profit_pct > fee_threshold:
+            # Exceeds fee - signal to Grok this covers the exit fee
+            hints.append(f"Profit {profit_pct:+.2f}% covers exit fee {fee_threshold:.2f}%")
             confidence = min(confidence + 0.05, 0.7)
         elif profit_pct < -1.0:
             hints.append(f"Loss {profit_pct:+.2f}%")
@@ -1010,6 +1010,23 @@ class ETHEUROpportunityDetector:
             confidence = min(confidence + 0.1, 0.8)
 
         hint_text = ", ".join(hints) if hints else "No strong signals"
+
+        # Calculate position within 6h range for Grok context
+        eth_6h_position = "unknown"
+        price_to_high_pct = 0
+        if eth_6h_high is not None and eth_6h_low is not None:
+            range_size = eth_6h_high - eth_6h_low
+            if range_size > 0:
+                position_in_range = (eth_price - eth_6h_low) / range_size * 100
+                price_to_high_pct = ((eth_6h_high - eth_price) / eth_price) * 100
+                if position_in_range >= 80:
+                    eth_6h_position = "near_high"
+                elif position_in_range >= 50:
+                    eth_6h_position = "upper_half"
+                elif position_in_range >= 20:
+                    eth_6h_position = "lower_half"
+                else:
+                    eth_6h_position = "near_low"
 
         opportunities.append(TradeOpportunity(
             type="hold_or_exit",
@@ -1028,15 +1045,19 @@ class ETHEUROpportunityDetector:
                 "rsi": rsi,
                 "markets_closed": markets_closed,
                 "exit_signals": exit_signals,
+                "eth_6h_high": eth_6h_high,
+                "eth_6h_low": eth_6h_low,
+                "eth_6h_position": eth_6h_position,
+                "price_to_high_pct": price_to_high_pct,
                 **trend_details
             }
         ))
         print(f"      🔍 Hold/Exit Analysis: {trend_direction.upper()} ({trend_strength}) - Profit: {profit_pct:+.2f}%{market_hours_note}")
-        # Show threshold status
-        if profit_pct > roundtrip_threshold:
-            print(f"         ✅ Profit ({profit_pct:+.2f}%) exceeds threshold ({roundtrip_threshold:.2f}%) - acceptable exit")
+        # Show fee coverage status
+        if profit_pct > fee_threshold:
+            print(f"         ✅ Profit ({profit_pct:+.2f}%) covers exit fee ({fee_threshold:.2f}%)")
         else:
-            print(f"         ⚠️ Profit ({profit_pct:+.2f}%) below threshold ({roundtrip_threshold:.2f}%) - marginal")
+            print(f"         ⚠️ Profit ({profit_pct:+.2f}%) below fee ({fee_threshold:.2f}%)")
         print(f"         Price changes: {trend_summary}")
         rsi_text = f"{rsi:.0f}" if rsi else "N/A"
         if eur_watermark > 0:
@@ -1472,20 +1493,22 @@ DECISION GUIDELINES:
 
 WHEN HOLDING ETH (hold_or_exit):
 4. If you see an opportunity, EUR watermark is ALREADY beaten (system enforces this)
-5. PROFIT THRESHOLD: 0.52% covers round-trip fees (0.26% × 2). If profit > 0.52% and price is at/above 6h midpoint, this is an acceptable exit.
-6. EXIT if: profit > 0.52% AND (downcycle trend OR overbought RSI >70 OR profit >1%)
-7. HOLD if: profit < 0.52% - not enough to justify fees
-8. HOLD if: very strong upcycle + RSI <50 - more upside likely
-9. Consider: Price is at/above 6h midpoint (system enforces this), so this is a good exit level. Balance profit-taking vs potential further gains.
+5. FEE THRESHOLD: 0.26% covers this trade's fee. Profit must exceed this to avoid loss.
+6. 6H WINDOW STRATEGY: Price is at/above 6h midpoint (system enforces). This prevents eager/premature selling after buying ETH at good prices. Ideal is to sell near 6h HIGH, but midpoint is practical heuristic.
+7. EXIT if: profit > 0.26% AND (price near 6h high OR downcycle trend OR overbought RSI >70 OR profit >1%)
+8. HOLD if: profit < 0.26% - doesn't cover exit fee
+9. HOLD if: strong upcycle + price well below 6h high - likely to rise further toward high
+10. Consider: We're already at midpoint (good level), but if price is rising toward 6h high, waiting may capture more profit. Avoid eager exits that hurt ladder strategy.
 
 WHEN HOLDING EUR (hold_or_enter):
-10. STOP LOSS OVERRIDE: If opportunity type is "stop_loss", ALWAYS execute immediately - no exceptions. This means we've lost €2,000+ and must return to our safe ETH position.
-11. EMERGENCY RE-ENTRY: If opportunity type is "emergency_entry", STRONGLY consider executing - RSI <20 is extremely oversold and we need to avoid being stuck in EUR.
-12. If you see a regular opportunity, ETH watermark is ALREADY beaten (system enforces this)
-13. ENTER if: oversold RSI <30 + good ETH improvement, or strong upcycle trend starting
-14. HOLD if: RSI is overbought (>75) even if can beat watermark - pullback likely
-15. HOLD if: trend is downcycle - consider waiting for even lower price (better ETH entry)
-16. Consider: Will ETH price drop more, giving us even better entry?
+11. STOP LOSS OVERRIDE: If opportunity type is "stop_loss", ALWAYS execute immediately - no exceptions. This means we've lost €2,000+ and must return to our safe ETH position.
+12. EMERGENCY RE-ENTRY: If opportunity type is "emergency_entry", STRONGLY consider executing - RSI <20 is extremely oversold and we need to avoid being stuck in EUR.
+13. If you see a regular opportunity, ETH watermark is ALREADY beaten (system enforces this)
+14. 6H WINDOW STRATEGY: Ideal is to buy near 6h LOW to maximize ETH accumulation. Wait for dips toward low end of range.
+15. ENTER if: oversold RSI <30 + good ETH improvement, or strong upcycle trend starting from near 6h low
+16. HOLD if: RSI is overbought (>75) even if can beat watermark - pullback likely
+17. HOLD if: trend is downcycle but price not yet near 6h low - better entry coming
+18. Consider: Will ETH price drop more toward 6h low, giving us even better entry? Patience yields more ETH.
 
 CONSTRAINTS:
 - 5-minute minimum between trades (enforced by system)
