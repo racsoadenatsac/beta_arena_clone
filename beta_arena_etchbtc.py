@@ -927,24 +927,12 @@ class ETHEUROpportunityDetector:
         trend_summary = f"1h: {change_1h:+.2f}%, 3h: {change_3h:+.2f}%, 6h: {change_6h:+.2f}%"
 
         # ========================================================================
-        # PRICE FILTER: Only exit at or above 6h midpoint
+        # Show 6h price context (informational only - Grok decides)
         # ========================================================================
-        # After entering ETH, wait for price to reach halfway between 6h high/low
         if eth_6h_high is not None and eth_6h_low is not None:
             midpoint_6h = (eth_6h_high + eth_6h_low) / 2
             price_vs_midpoint = ((eth_price - midpoint_6h) / midpoint_6h) * 100
-
-            if eth_price < midpoint_6h:
-                # Price below midpoint - wait for better exit
-                print(f"      🔍 Hold/Exit Analysis: {trend_direction.upper()} ({trend_strength}) - Profit: {profit_pct:+.2f}%{market_hours_note}")
-                print(f"         💰 Price: €{eth_price:,.2f} | 6h range: €{eth_6h_low:,.2f} - €{eth_6h_high:,.2f}")
-                print(f"         ⏸️ Below midpoint €{midpoint_6h:,.2f} ({price_vs_midpoint:+.2f}%)")
-                print(f"         Waiting for price to reach or exceed midpoint before creating exit opportunity")
-                return opportunities  # Return empty - no opportunity yet
-
-            # Price at or above midpoint - can create exit opportunity
-            print(f"      💰 Price: €{eth_price:,.2f} ✓ At/above midpoint €{midpoint_6h:,.2f} ({price_vs_midpoint:+.2f}%)")
-            print(f"      6h range: €{eth_6h_low:,.2f} - €{eth_6h_high:,.2f}")
+            print(f"      💰 Price: €{eth_price:,.2f} | 6h range: €{eth_6h_low:,.2f} - €{eth_6h_high:,.2f} (midpoint: €{midpoint_6h:,.2f}, {price_vs_midpoint:+.2f}%)")
 
         # ========================================================================
         # EUR WATERMARK - Track for reference only (NOT enforced)
