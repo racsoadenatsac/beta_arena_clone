@@ -695,6 +695,9 @@ class ETHEUROpportunityDetector:
         self.eur_exit_price = None
         self.market_provider = None  # Will be set by bot
 
+        # Midpoint exit window tracking (1 hour to choose best exit after exceeding midpoint)
+        self.midpoint_exceeded_at: Optional[datetime] = None  # When price first exceeded 6h midpoint
+
     def _analyze_historical_trend(self, market: Dict) -> Tuple[str, str, Dict]:
         """Analyze historical price data to determine trend direction and strength
 
@@ -1625,9 +1628,6 @@ class ETHEURBot:
         # 6-hour price tracking for ETH exit strategy
         self.eth_price_history: List[Tuple[datetime, float]] = []  # (timestamp, price) tuples for 6h window
 
-        # Midpoint exit window tracking (1 hour to choose best exit after exceeding midpoint)
-        self.midpoint_exceeded_at: Optional[datetime] = None  # When price first exceeded 6h midpoint
-
         # Database - must be initialized before creating AI trader
         self.db_name = f"eth_eur_{config.bot_name.lower()}.db"
         self._init_db()
@@ -1990,8 +1990,8 @@ class ETHEURBot:
             self.exit_signal_first_seen = None
             self.exit_signal_count = 0
             self.last_eth_price_at_signal = None
-            # Reset midpoint exit window timer
-            self.midpoint_exceeded_at = None
+            # Reset midpoint exit window timer in opportunity detector
+            self.opportunity_detector.midpoint_exceeded_at = None
 
         self.total_trades += 1
         self.total_fees += fee
