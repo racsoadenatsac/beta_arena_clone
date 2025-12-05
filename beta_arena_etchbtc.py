@@ -930,21 +930,36 @@ class ETHEUROpportunityDetector:
         # PRICE FILTER: Only exit at or above 6h midpoint
         # ========================================================================
         # After entering ETH, wait for price to reach halfway between 6h high/low
+        # Once exceeded, Grok has 1 hour to choose best exit
+        minutes_since_midpoint_exceeded = None
         if eth_6h_high is not None and eth_6h_low is not None:
             midpoint_6h = (eth_6h_high + eth_6h_low) / 2
             price_vs_midpoint = ((eth_price - midpoint_6h) / midpoint_6h) * 100
 
             if eth_price < midpoint_6h:
-                # Price below midpoint - wait for better exit
+                # Price below midpoint - reset timer and wait
+                if self.midpoint_exceeded_at is not None:
+                    print(f"      🔻 Price dropped below midpoint - resetting exit window")
+                self.midpoint_exceeded_at = None
+
                 print(f"      🔍 Hold/Exit Analysis: {trend_direction.upper()} ({trend_strength}) - Profit: {profit_pct:+.2f}%{market_hours_note}")
                 print(f"         💰 Price: €{eth_price:,.2f} | 6h range: €{eth_6h_low:,.2f} - €{eth_6h_high:,.2f}")
                 print(f"         ⏸️ Below midpoint €{midpoint_6h:,.2f} ({price_vs_midpoint:+.2f}%)")
                 print(f"         Waiting for price to reach or exceed midpoint before creating exit opportunity")
                 return opportunities  # Return empty - no opportunity yet
 
-            # Price at or above midpoint - can create exit opportunity
+            # Price at or above midpoint - start/continue exit window
+            now = datetime.now()
+            if self.midpoint_exceeded_at is None:
+                self.midpoint_exceeded_at = now
+                print(f"      🎯 Price exceeded midpoint! Starting 1-hour exit window")
+
+            minutes_since_midpoint_exceeded = (now - self.midpoint_exceeded_at).total_seconds() / 60
+            minutes_remaining = 60 - minutes_since_midpoint_exceeded
+
             print(f"      💰 Price: €{eth_price:,.2f} ✓ At/above midpoint €{midpoint_6h:,.2f} ({price_vs_midpoint:+.2f}%)")
             print(f"      6h range: €{eth_6h_low:,.2f} - €{eth_6h_high:,.2f}")
+            print(f"      ⏱️ Exit window: {minutes_since_midpoint_exceeded:.0f}m elapsed, {minutes_remaining:.0f}m remaining (1h limit)")
 
         # ========================================================================
         # EUR WATERMARK - Track for reference only (NOT enforced)
@@ -1049,6 +1064,7 @@ class ETHEUROpportunityDetector:
                 "eth_6h_low": eth_6h_low,
                 "eth_6h_position": eth_6h_position,
                 "price_to_high_pct": price_to_high_pct,
+                "minutes_since_midpoint_exceeded": minutes_since_midpoint_exceeded,
                 **trend_details
             }
         ))
@@ -1495,20 +1511,25 @@ WHEN HOLDING ETH (hold_or_exit):
 4. If you see an opportunity, EUR watermark is ALREADY beaten (system enforces this)
 5. FEE THRESHOLD: 0.26% covers this trade's fee. Profit must exceed this to avoid loss.
 6. 6H WINDOW STRATEGY: Price is at/above 6h midpoint (system enforces). This prevents eager/premature selling after buying ETH at good prices. Ideal is to sell near 6h HIGH, but midpoint is practical heuristic.
-7. EXIT if: profit > 0.26% AND (price near 6h high OR downcycle trend OR overbought RSI >70 OR profit >1%)
-8. HOLD if: profit < 0.26% - doesn't cover exit fee
-9. HOLD if: strong upcycle + price well below 6h high - likely to rise further toward high
-10. Consider: We're already at midpoint (good level), but if price is rising toward 6h high, waiting may capture more profit. Avoid eager exits that hurt ladder strategy.
+7. 1-HOUR EXIT WINDOW: Check "minutes_since_midpoint_exceeded" in market conditions. You have 1 HOUR from when price first exceeded midpoint to choose the BEST exit. This prevents endless waiting and forces timely decisions.
+   - 0-20 minutes: Can be patient, wait for better price if strong upcycle
+   - 20-40 minutes: Should be looking for good exit point
+   - 40-60 minutes: INCREASING URGENCY - exit soon if profit >0.26%
+   - >60 minutes: CRITICAL - must exit to avoid missing opportunity window
+8. EXIT if: profit > 0.26% AND (price near 6h high OR downcycle trend OR overbought RSI >70 OR profit >1% OR >40 minutes in exit window)
+9. HOLD if: profit < 0.26% - doesn't cover exit fee
+10. HOLD if: strong upcycle + price well below 6h high + <30 minutes in window - likely to rise further
+11. Consider: Balance between waiting for 6h high vs respecting 1-hour time limit. Don't be too greedy - good profit is better than perfect profit.
 
 WHEN HOLDING EUR (hold_or_enter):
-11. STOP LOSS OVERRIDE: If opportunity type is "stop_loss", ALWAYS execute immediately - no exceptions. This means we've lost €2,000+ and must return to our safe ETH position.
-12. EMERGENCY RE-ENTRY: If opportunity type is "emergency_entry", STRONGLY consider executing - RSI <20 is extremely oversold and we need to avoid being stuck in EUR.
-13. If you see a regular opportunity, ETH watermark is ALREADY beaten (system enforces this)
-14. 6H WINDOW STRATEGY: Ideal is to buy near 6h LOW to maximize ETH accumulation. Wait for dips toward low end of range.
-15. ENTER if: oversold RSI <30 + good ETH improvement, or strong upcycle trend starting from near 6h low
-16. HOLD if: RSI is overbought (>75) even if can beat watermark - pullback likely
-17. HOLD if: trend is downcycle but price not yet near 6h low - better entry coming
-18. Consider: Will ETH price drop more toward 6h low, giving us even better entry? Patience yields more ETH.
+12. STOP LOSS OVERRIDE: If opportunity type is "stop_loss", ALWAYS execute immediately - no exceptions. This means we've lost €2,000+ and must return to our safe ETH position.
+13. EMERGENCY RE-ENTRY: If opportunity type is "emergency_entry", STRONGLY consider executing - RSI <20 is extremely oversold and we need to avoid being stuck in EUR.
+14. If you see a regular opportunity, ETH watermark is ALREADY beaten (system enforces this)
+15. 6H WINDOW STRATEGY: Ideal is to buy near 6h LOW to maximize ETH accumulation. Wait for dips toward low end of range.
+16. ENTER if: oversold RSI <30 + good ETH improvement, or strong upcycle trend starting from near 6h low
+17. HOLD if: RSI is overbought (>75) even if can beat watermark - pullback likely
+18. HOLD if: trend is downcycle but price not yet near 6h low - better entry coming
+19. Consider: Will ETH price drop more toward 6h low, giving us even better entry? Patience yields more ETH.
 
 CONSTRAINTS:
 - 5-minute minimum between trades (enforced by system)
@@ -1603,6 +1624,9 @@ class ETHEURBot:
 
         # 6-hour price tracking for ETH exit strategy
         self.eth_price_history: List[Tuple[datetime, float]] = []  # (timestamp, price) tuples for 6h window
+
+        # Midpoint exit window tracking (1 hour to choose best exit after exceeding midpoint)
+        self.midpoint_exceeded_at: Optional[datetime] = None  # When price first exceeded 6h midpoint
 
         # Database - must be initialized before creating AI trader
         self.db_name = f"eth_eur_{config.bot_name.lower()}.db"
@@ -1966,6 +1990,8 @@ class ETHEURBot:
             self.exit_signal_first_seen = None
             self.exit_signal_count = 0
             self.last_eth_price_at_signal = None
+            # Reset midpoint exit window timer
+            self.midpoint_exceeded_at = None
 
         self.total_trades += 1
         self.total_fees += fee
