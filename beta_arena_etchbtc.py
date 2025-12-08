@@ -1514,28 +1514,28 @@ WHEN HOLDING ETH (hold_or_exit):
 4. If you see an opportunity, EUR watermark is ALREADY beaten (system enforces this)
 5. FEE THRESHOLD: 0.26% covers this trade's fee. Profit must exceed this to avoid loss.
 6. 6H WINDOW STRATEGY: Price is at/above 6h midpoint (system enforces). This prevents eager/premature selling after buying ETH at good prices. Ideal is to sell near 6h HIGH, but midpoint is practical heuristic.
-7. WAVE-RIDING STRATEGY: Check "trend" in market conditions. Once above midpoint, RIDE THE UPTREND until it changes.
-   - UPTREND: HOLD and ride the wave - don't exit into strength even if >60 minutes
-   - DOWNTREND/SIDEWAYS: Exit if profit >0.26% - the tide has changed
-   - Time limit is REMOVED during strong uptrends - never exit during a rally
-8. 1-HOUR EXIT WINDOW: Check "minutes_since_midpoint_exceeded". Used for DOWNTREND/SIDEWAYS situations only:
-   - <40 minutes: Can wait for trend to improve
-   - >40 minutes: Exit if profit >0.26% and not in strong uptrend
-   - Time urgency is OVERRIDDEN by uptrends - always ride the wave
-9. EXIT if: profit > 0.26% AND (trend changed to DOWNTREND OR SIDEWAYS OR overbought RSI >75 OR profit >2%)
-10. HOLD if: profit < 0.26% - doesn't cover exit fee
-11. HOLD if: UPTREND (any strength) - ride the wave, don't sell into strength
-12. Consider: Trend changes are your signal. Exit on downtrend/sideways, hold during uptrend. Never cut a winning rally short.
+7. WAVE-RIDING STRATEGY - PRIMARY EXIT SIGNAL: Check "trend" in market conditions. The trend classification (UPTREND/SIDEWAYS/DOWNTREND) is your PRIMARY exit signal.
+   - UPTREND: HOLD - ride the wave even if >60 minutes, never exit into strength
+   - SIDEWAYS: EXIT NOW if profit >0.26% - momentum lost, take profits. SIDEWAYS means the rally is OVER.
+   - DOWNTREND: EXIT NOW if profit >0.26% - tide has turned, exit immediately
+8. CRITICAL: SIDEWAYS IS NOT UPTREND. If trend shows SIDEWAYS, the wave has ended. Exit to lock in profits.
+9. 1-HOUR EXIT WINDOW: Check "minutes_since_midpoint_exceeded". Provides urgency for SIDEWAYS/DOWNTREND:
+   - >50 minutes + SIDEWAYS + profit >0.26% = MANDATORY EXIT
+   - Time limit is REMOVED only during UPTREND (any strength)
+10. EXIT if: profit > 0.26% AND (DOWNTREND OR SIDEWAYS OR RSI >75 OR profit >2% OR [>50min + SIDEWAYS])
+11. HOLD if: profit < 0.26% - doesn't cover exit fee
+12. HOLD if: trend = "UPTREND" (any strength) - ride the wave regardless of time
+13. MANDATORY EXIT: If SIDEWAYS + profit >1% + >50min window = EXIT IMMEDIATELY. This is excellent profit with no upward momentum.
 
 WHEN HOLDING EUR (hold_or_enter):
-13. STOP LOSS OVERRIDE: If opportunity type is "stop_loss", ALWAYS execute immediately - no exceptions. This means we've lost €2,000+ and must return to our safe ETH position.
-14. EMERGENCY RE-ENTRY: If opportunity type is "emergency_entry", STRONGLY consider executing - RSI <20 is extremely oversold and we need to avoid being stuck in EUR.
-15. If you see a regular opportunity, ETH watermark is ALREADY beaten (system enforces this)
-16. 6H WINDOW STRATEGY: Ideal is to buy near 6h LOW to maximize ETH accumulation. Wait for dips toward low end of range.
-17. ENTER if: oversold RSI <30 + good ETH improvement, or strong upcycle trend starting from near 6h low
-18. HOLD if: RSI is overbought (>75) even if can beat watermark - pullback likely
-19. HOLD if: trend is downcycle but price not yet near 6h low - better entry coming
-20. Consider: Will ETH price drop more toward 6h low, giving us even better entry? Patience yields more ETH.
+14. STOP LOSS OVERRIDE: If opportunity type is "stop_loss", ALWAYS execute immediately - no exceptions. This means we've lost €2,000+ and must return to our safe ETH position.
+15. EMERGENCY RE-ENTRY: If opportunity type is "emergency_entry", STRONGLY consider executing - RSI <20 is extremely oversold and we need to avoid being stuck in EUR.
+16. If you see a regular opportunity, ETH watermark is ALREADY beaten (system enforces this)
+17. 6H WINDOW STRATEGY: Ideal is to buy near 6h LOW to maximize ETH accumulation. Wait for dips toward low end of range.
+18. ENTER if: oversold RSI <30 + good ETH improvement, or strong upcycle trend starting from near 6h low
+19. HOLD if: RSI is overbought (>75) even if can beat watermark - pullback likely
+20. HOLD if: trend is downcycle but price not yet near 6h low - better entry coming
+21. Consider: Will ETH price drop more toward 6h low, giving us even better entry? Patience yields more ETH.
 
 CONSTRAINTS:
 - 5-minute minimum between trades (enforced by system)
