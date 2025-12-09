@@ -745,7 +745,13 @@ class ETHEUROpportunityDetector:
         upward_signals = sum([change_1h > 0.5, change_3h > 1.0, change_6h > 1.5, momentum_30m > 0.3])
         downward_signals = sum([change_1h < -0.5, change_3h < -1.0, change_6h < -1.5, momentum_30m < -0.3])
 
-        if upward_signals >= 3:
+        # STALL DETECTION: If 1h momentum is near zero, the trend has stalled regardless of longer timeframes
+        # This prevents lag from 3h/6h periods that still reflect earlier rally
+        # Critical for exit signals when holding ETH with good profits
+        if -0.5 <= change_1h <= 0.5 and (change_3h > 0 or change_6h > 0):
+            # 1h momentum stalled but longer timeframes still positive = uptrend has ended
+            trend_direction = "sideways"
+        elif upward_signals >= 3:
             trend_direction = "upcycle"
         elif downward_signals >= 3:
             trend_direction = "downcycle"
