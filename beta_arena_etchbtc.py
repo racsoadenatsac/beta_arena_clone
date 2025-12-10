@@ -32,6 +32,9 @@ from collections import deque
 import pytz
 import base64
 import hmac
+from cryptography.hazmat.primitives import serialization, hashes
+from cryptography.hazmat.primitives.asymmetric import padding
+from cryptography.hazmat.backends import default_backend
 
 # ==============================================================================
 # CONFIGURATION
@@ -86,6 +89,7 @@ class Config:
     # API Keys
     grok_api_key: str = os.getenv("GROK_API_KEY", "")
     kalshi_api_key: str = os.getenv("KALSHI_API_KEY", "")
+    kalshi_private_key: str = os.getenv("KALSHI_PRIVATE_KEY", "")
     
     # Notifications
     enable_imessage: bool = True
@@ -434,148 +438,52 @@ class TradeOpportunity:
     expected_quantity: Optional[float] = None  # Expected quantity of to_asset (e.g., ETH amount for EUR→ETH)
 
 # ==============================================================================
-# POLYMARKET PROVIDER (ETH Price Predictions)
-# ==============================================================================
-
-class PolymarketProvider:
-    """Fetch ETH price predictions from Polymarket"""
-
-    def __init__(self):
-        self.base_url = "https://clob.polymarket.com"
-        self.gamma_url = "https://gamma-api.polymarket.com"
-        self.cache = {}
-        self.cache_duration = 60  # Cache predictions for 1 minute
-
-    def get_eth_prediction(self) -> Optional[Dict]:
-        """
-        Get Polymarket prediction for ETH price movement.
-        Searches for any active ETH prediction markets (hourly, daily, price targets, etc.)
-
-        Returns:
-            Dict with 'probability' (0-100), 'market_title', 'last_updated', 'available'
-            None if unable to fetch
-        """
-        try:
-            # Check cache first
-            cache_key = "eth_prediction"
-            if cache_key in self.cache:
-                cached_data, cached_time = self.cache[cache_key]
-                if time.time() - cached_time < self.cache_duration:
-                    return cached_data
-
-            # Search for ETH prediction markets
-            # Try multiple search strategies
-            search_url = f"{self.gamma_url}/markets"
-
-            # First try: search with ETH keyword
-            params = {
-                "limit": 50,  # Increased to find more markets
-                "active": "true"
-            }
-
-            response = requests.get(search_url, params=params, timeout=5)
-            if response.status_code != 200:
-                return self._neutral_prediction("API error")
-
-            markets = response.json()
-
-            # Search for ETH markets with priority ordering:
-            # 1. Hourly predictions (most immediate)
-            # 2. Daily predictions (very relevant)
-            # 3. Weekly predictions (still useful)
-            # 4. Price target predictions (useful for direction)
-            eth_market = None
-            market_priority = None
-
-            for market in markets:
-                title = market.get("question", "").lower()
-
-                # Skip non-ETH markets
-                if "eth" not in title and "ethereum" not in title:
-                    continue
-
-                # Priority 1: Hourly predictions
-                if "hour" in title or "hourly" in title:
-                    eth_market = market
-                    market_priority = "hourly"
-                    break
-
-                # Priority 2: Daily predictions (only if we haven't found hourly)
-                if not eth_market and ("today" in title or "daily" in title or "day" in title):
-                    eth_market = market
-                    market_priority = "daily"
-                    continue
-
-                # Priority 3: Weekly predictions
-                if not eth_market and ("week" in title or "weekly" in title):
-                    eth_market = market
-                    market_priority = "weekly"
-                    continue
-
-                # Priority 4: Price predictions (higher/lower, up/down)
-                if not eth_market and any(word in title for word in ["higher", "lower", "above", "below", "up", "down", "rise", "fall"]):
-                    eth_market = market
-                    market_priority = "price_target"
-
-            if not eth_market:
-                # No ETH market found
-                return self._neutral_prediction("No active ETH prediction markets")
-
-            # Get the probability from the market
-            # Polymarket uses outcomes with probabilities
-            outcomes = eth_market.get("outcomes", [])
-            bullish_probability = None
-
-            # Look for bullish indicators
-            for outcome in outcomes:
-                outcome_text = outcome.get("outcome", "").lower()
-                if any(word in outcome_text for word in ["yes", "up", "higher", "above", "rise"]):
-                    bullish_probability = float(outcome.get("price", 0.5)) * 100
-                    break
-
-            if bullish_probability is None:
-                bullish_probability = 50.0
-
-            result = {
-                "probability": bullish_probability,
-                "market_title": eth_market.get("question", "ETH Prediction"),
-                "market_type": market_priority,
-                "last_updated": datetime.now().isoformat(),
-                "available": True
-            }
-
-            # Cache the result
-            self.cache[cache_key] = (result, time.time())
-
-            return result
-
-        except Exception as e:
-            # Return neutral prediction on error
-            return self._neutral_prediction(f"Error: {str(e)}")
-
-    def _neutral_prediction(self, reason: str) -> Dict:
-        """Return a neutral 50% prediction with reason"""
-        return {
-            "probability": 50.0,
-            "market_title": reason,
-            "market_type": "none",
-            "last_updated": datetime.now().isoformat(),
-            "available": False
-        }
-
-# ==============================================================================
 # KALSHI PROVIDER (ETH Price Predictions)
 # ==============================================================================
 
 class KalshiProvider:
-    """Fetch ETH price predictions from Kalshi prediction markets"""
+    """Fetch ETH price predictions from Kalshi prediction markets with RSA authentication"""
 
-    def __init__(self, api_key: str = ""):
+    def __init__(self, api_key: str = "", private_key_pem: str = ""):
         self.base_url = "https://trading-api.kalshi.com"
         self.api_version = "v2"
         self.api_key = api_key
         self.cache = {}
         self.cache_duration = 60  # Cache predictions for 1 minute
+
+        # Parse RSA private key if provided
+        self.private_key = None
+        if private_key_pem:
+            try:
+                self.private_key = serialization.load_pem_private_key(
+                    private_key_pem.encode('utf-8'),
+                    password=None,
+                    backend=default_backend()
+                )
+            except Exception as e:
+                print(f"⚠️ Kalshi: Failed to parse private key: {e}")
+
+    def _create_signature(self, timestamp: str, method: str, path: str) -> Optional[str]:
+        """Create RSA signature for Kalshi API request"""
+        if not self.private_key:
+            return None
+
+        try:
+            # Create message to sign: timestamp + method + path
+            message = f"{timestamp}{method}{path}"
+
+            # Sign with RSA private key
+            signature = self.private_key.sign(
+                message.encode('utf-8'),
+                padding.PKCS1v15(),
+                hashes.SHA256()
+            )
+
+            # Base64 encode the signature
+            return base64.b64encode(signature).decode('utf-8')
+        except Exception as e:
+            print(f"⚠️ Kalshi: Failed to create signature: {e}")
+            return None
 
     def get_eth_prediction(self) -> Optional[Dict]:
         """
@@ -594,17 +502,27 @@ class KalshiProvider:
                 if time.time() - cached_time < self.cache_duration:
                     return cached_data
 
-            # Search for ETH markets on Kalshi
-            search_url = f"{self.base_url}/trade-api/{self.api_version}/markets"
+            # Search for ETH markets on Kalshi with RSA authentication
+            path = f"/trade-api/{self.api_version}/markets"
+            search_url = f"{self.base_url}{path}"
             params = {
                 "limit": 100,
                 "status": "open"
             }
 
-            # Add authentication headers if API key is provided
+            # Create RSA signature authentication headers
             headers = {}
-            if self.api_key:
-                headers["Authorization"] = f"Bearer {self.api_key}"
+            if self.api_key and self.private_key:
+                # Generate timestamp in milliseconds
+                timestamp = str(int(time.time() * 1000))
+
+                # Create signature
+                signature = self._create_signature(timestamp, "GET", path)
+
+                if signature:
+                    headers["KALSHI-ACCESS-KEY"] = self.api_key
+                    headers["KALSHI-ACCESS-SIGNATURE"] = signature
+                    headers["KALSHI-ACCESS-TIMESTAMP"] = timestamp
 
             response = requests.get(search_url, params=params, headers=headers, timeout=5)
             if response.status_code != 200:
@@ -1922,8 +1840,7 @@ class ETHEURBot:
         # Components
         self.market_hours = MarketHoursDetector()
         self.market = KrakenMarketProvider()
-        self.polymarket = PolymarketProvider()
-        self.kalshi = KalshiProvider(config.kalshi_api_key)
+        self.kalshi = KalshiProvider(config.kalshi_api_key, config.kalshi_private_key)
         self.opportunity_detector = ETHEUROpportunityDetector(config)
 
         # Connect market provider to opportunity detector for trend analysis
@@ -2555,7 +2472,7 @@ class ETHEURBot:
             else:
                 print(f"   ⏸️ HOLD")
 
-                # POLYMARKET OVERRIDE: Check if we should force exit despite Grok saying HOLD
+                # PREDICTION MARKET OVERRIDE: Check if we should force exit despite Grok saying HOLD
                 # Only for ETH→EUR exits (not EUR→ETH entries)
                 if (self.current_position and self.current_position.symbol == "ETH" and
                     opportunities and opportunities[0].to_asset == "EUR"):
@@ -2577,50 +2494,33 @@ class ETHEURBot:
                     )
 
                     if is_downturn_in_upcycle:
-                        # Check prediction markets (Polymarket + Kalshi) and RSI
-                        print(f"\n   📊 Override Check (Polymarket + Kalshi + RSI)...")
+                        # Check prediction markets (Kalshi) and RSI
+                        print(f"\n   📊 Override Check (Kalshi + RSI)...")
                         print(f"      Detected downturn within upcycle (trend: {trend}, 3h: {change_3h:+.2f}%, 6h: {change_6h:+.2f}%)")
 
-                        # Try Polymarket first
-                        poly_prediction = self.polymarket.get_eth_prediction()
                         override_triggered = False
                         override_reason = ""
 
-                        if poly_prediction:
-                            prob = poly_prediction["probability"]
-                            market_type = poly_prediction.get("market_type", "unknown")
-                            print(f"      Polymarket ({market_type}): {prob:.1f}% bullish")
-                            print(f"      Market: {poly_prediction['market_title']}")
+                        # Check Kalshi prediction market
+                        kalshi_prediction = self.kalshi.get_eth_prediction()
 
-                            # If Polymarket says ETH will be UP (>60%), and we're seeing a downturn,
-                            # this suggests we're near a local peak - override Grok and SELL
-                            if prob > 60 and poly_prediction.get("available", False):
+                        if kalshi_prediction:
+                            prob = kalshi_prediction["probability"]
+                            market_type = kalshi_prediction.get("market_type", "unknown")
+                            ticker = kalshi_prediction.get("ticker", "")
+                            print(f"      Kalshi ({market_type}): {prob:.1f}% bullish")
+                            print(f"      Market: {kalshi_prediction['market_title']}")
+                            if ticker:
+                                print(f"      Ticker: {ticker}")
+
+                            # High bullish sentiment during downturn suggests local peak
+                            if prob > 60 and kalshi_prediction.get("available", False):
                                 override_triggered = True
-                                override_reason = f"Polymarket {prob:.1f}% bullish despite downturn = local peak"
+                                override_reason = f"Kalshi {prob:.1f}% bullish despite downturn = local peak"
                             else:
-                                print(f"      Polymarket: {prob:.1f}% (need >60% for override)")
+                                print(f"      Kalshi: {prob:.1f}% (need >60% for override)")
 
-                        # Try Kalshi if Polymarket didn't trigger
-                        if not override_triggered:
-                            kalshi_prediction = self.kalshi.get_eth_prediction()
-
-                            if kalshi_prediction:
-                                prob = kalshi_prediction["probability"]
-                                market_type = kalshi_prediction.get("market_type", "unknown")
-                                ticker = kalshi_prediction.get("ticker", "")
-                                print(f"      Kalshi ({market_type}): {prob:.1f}% bullish")
-                                print(f"      Market: {kalshi_prediction['market_title']}")
-                                if ticker:
-                                    print(f"      Ticker: {ticker}")
-
-                                # Same logic: high bullish sentiment during downturn = local peak
-                                if prob > 60 and kalshi_prediction.get("available", False):
-                                    override_triggered = True
-                                    override_reason = f"Kalshi {prob:.1f}% bullish despite downturn = local peak"
-                                else:
-                                    print(f"      Kalshi: {prob:.1f}% (need >60% for override)")
-
-                        # RSI-based fallback: If Polymarket unavailable or didn't trigger, check RSI
+                        # RSI-based fallback: If Kalshi unavailable or didn't trigger, check RSI
                         if not override_triggered:
                             rsi = market_conditions.get("rsi")
                             profit_pct = market_conditions.get("profit_pct", 0)
