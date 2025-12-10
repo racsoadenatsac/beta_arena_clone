@@ -431,6 +431,100 @@ class TradeOpportunity:
     expected_quantity: Optional[float] = None  # Expected quantity of to_asset (e.g., ETH amount for EUR→ETH)
 
 # ==============================================================================
+# POLYMARKET PROVIDER (ETH Price Predictions)
+# ==============================================================================
+
+class PolymarketProvider:
+    """Fetch ETH price predictions from Polymarket"""
+
+    def __init__(self):
+        self.base_url = "https://clob.polymarket.com"
+        self.gamma_url = "https://gamma-api.polymarket.com"
+        self.cache = {}
+        self.cache_duration = 60  # Cache predictions for 1 minute
+
+    def get_eth_hourly_prediction(self) -> Optional[Dict]:
+        """
+        Get Polymarket prediction for 'Will ETH be up this hour?'
+
+        Returns:
+            Dict with 'probability' (0-100), 'market_title', 'last_updated'
+            None if unable to fetch
+        """
+        try:
+            # Check cache first
+            cache_key = "eth_hourly"
+            if cache_key in self.cache:
+                cached_data, cached_time = self.cache[cache_key]
+                if time.time() - cached_time < self.cache_duration:
+                    return cached_data
+
+            # Search for ETH hourly markets
+            # Polymarket's API endpoint for searching markets
+            search_url = f"{self.gamma_url}/markets"
+            params = {
+                "limit": 10,
+                "active": "true"
+            }
+
+            response = requests.get(search_url, params=params, timeout=5)
+            if response.status_code != 200:
+                return None
+
+            markets = response.json()
+
+            # Look for ETH hourly prediction market
+            eth_market = None
+            for market in markets:
+                title = market.get("question", "").lower()
+                if "eth" in title and ("hour" in title or "hourly" in title):
+                    eth_market = market
+                    break
+
+            if not eth_market:
+                # No hourly ETH market found, return neutral prediction
+                return {
+                    "probability": 50.0,
+                    "market_title": "No active ETH hourly market",
+                    "last_updated": datetime.now().isoformat(),
+                    "available": False
+                }
+
+            # Get the probability from the market
+            # Polymarket uses outcomes with probabilities
+            outcomes = eth_market.get("outcomes", [])
+            up_probability = None
+
+            for outcome in outcomes:
+                if outcome.get("outcome", "").lower() in ["yes", "up", "higher"]:
+                    up_probability = float(outcome.get("price", 0.5)) * 100
+                    break
+
+            if up_probability is None:
+                up_probability = 50.0
+
+            result = {
+                "probability": up_probability,
+                "market_title": eth_market.get("question", "ETH Hourly"),
+                "last_updated": datetime.now().isoformat(),
+                "available": True
+            }
+
+            # Cache the result
+            self.cache[cache_key] = (result, time.time())
+
+            return result
+
+        except Exception as e:
+            # Return neutral prediction on error
+            return {
+                "probability": 50.0,
+                "market_title": f"Error: {str(e)}",
+                "last_updated": datetime.now().isoformat(),
+                "available": False
+            }
+
+# ==============================================================================
 # KRAKEN MARKET PROVIDER (Simplified for ETH and BTC tracking)
 # ==============================================================================
 
@@ -1644,6 +1738,7 @@ class ETHEURBot:
         # Components
         self.market_hours = MarketHoursDetector()
         self.market = KrakenMarketProvider()
+        self.polymarket = PolymarketProvider()
         self.opportunity_detector = ETHEUROpportunityDetector(config)
 
         # Connect market provider to opportunity detector for trend analysis
@@ -2274,6 +2369,54 @@ class ETHEURBot:
                     self.execute_trade(selected, market)
             else:
                 print(f"   ⏸️ HOLD")
+
+                # POLYMARKET OVERRIDE: Check if we should force exit despite Grok saying HOLD
+                # Only for ETH→EUR exits (not EUR→ETH entries)
+                if (self.current_position and self.current_position.symbol == "ETH" and
+                    opportunities and opportunities[0].to_asset == "EUR"):
+
+                    # Get the exit opportunity
+                    exit_opp = opportunities[0]
+                    market_conditions = exit_opp.market_conditions
+
+                    # Check if we have trend information
+                    trend = market_conditions.get("trend", "").lower()
+                    trend_details = market_conditions.get("trend_details", {})
+                    change_3h = trend_details.get("change_3h", 0)
+                    change_6h = trend_details.get("change_6h", 0)
+
+                    # Detect "downturn within upcycle": trend is SIDEWAYS/DOWNTREND but 3h/6h still positive
+                    is_downturn_in_upcycle = (
+                        trend in ["sideways", "downcycle"] and
+                        (change_3h > 0 or change_6h > 0)  # Longer timeframes still positive
+                    )
+
+                    if is_downturn_in_upcycle:
+                        # Fetch Polymarket prediction
+                        print(f"\n   📊 Polymarket Override Check...")
+                        print(f"      Detected downturn within upcycle (trend: {trend}, 3h: {change_3h:+.2f}%, 6h: {change_6h:+.2f}%)")
+
+                        poly_prediction = self.polymarket.get_eth_hourly_prediction()
+
+                        if poly_prediction:
+                            prob = poly_prediction["probability"]
+                            print(f"      Polymarket: ETH up this hour? {prob:.1f}%")
+                            print(f"      Market: {poly_prediction['market_title']}")
+
+                            # If Polymarket says ETH will be UP (>60%), and we're seeing a downturn,
+                            # this suggests we're near a local peak - override Grok and SELL
+                            if prob > 60 and poly_prediction.get("available", False):
+                                print(f"\n   ⚠️ POLYMARKET OVERRIDE: Force exit")
+                                print(f"      Reasoning: High bullish sentiment ({prob:.1f}%) despite downturn = local peak")
+                                print(f"      Action: SELL to lock in gains before reversal")
+
+                                # Override Grok's HOLD decision
+                                selected = exit_opp
+                                print(f"\n   🤖 Executing override decision...")
+                                self.execute_trade(selected, market)
+                                return  # Exit early to prevent duplicate processing
+                            else:
+                                print(f"      No override: Polymarket {prob:.1f}% (need >60%)")
 
                 # If we're tracking consensus but Grok says hold, record it
                 if self.current_position and self.current_position.symbol == "EUR":
