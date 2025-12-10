@@ -561,6 +561,137 @@ class PolymarketProvider:
         }
 
 # ==============================================================================
+# KALSHI PROVIDER (ETH Price Predictions)
+# ==============================================================================
+
+class KalshiProvider:
+    """Fetch ETH price predictions from Kalshi prediction markets"""
+
+    def __init__(self):
+        self.base_url = "https://trading-api.kalshi.com"
+        self.api_version = "v2"
+        self.cache = {}
+        self.cache_duration = 60  # Cache predictions for 1 minute
+
+    def get_eth_prediction(self) -> Optional[Dict]:
+        """
+        Get Kalshi prediction for ETH price movement.
+        Searches for any active ETH prediction markets.
+
+        Returns:
+            Dict with 'probability' (0-100), 'market_title', 'last_updated', 'available'
+            None if unable to fetch
+        """
+        try:
+            # Check cache first
+            cache_key = "eth_prediction"
+            if cache_key in self.cache:
+                cached_data, cached_time = self.cache[cache_key]
+                if time.time() - cached_time < self.cache_duration:
+                    return cached_data
+
+            # Search for ETH markets on Kalshi
+            search_url = f"{self.base_url}/trade-api/{self.api_version}/markets"
+            params = {
+                "limit": 100,
+                "status": "open"
+            }
+
+            response = requests.get(search_url, params=params, timeout=5)
+            if response.status_code != 200:
+                return self._neutral_prediction("Kalshi API error")
+
+            data = response.json()
+            markets = data.get("markets", [])
+
+            # Search for ETH markets with priority ordering
+            eth_market = None
+            market_priority = None
+
+            for market in markets:
+                ticker = market.get("ticker", "").lower()
+                title = market.get("title", "").lower()
+                subtitle = market.get("subtitle", "").lower()
+
+                # Combine all text fields for searching
+                search_text = f"{ticker} {title} {subtitle}"
+
+                # Skip non-ETH markets
+                if "eth" not in search_text and "ethereum" not in search_text:
+                    continue
+
+                # Skip expired or closed markets
+                if market.get("status") != "open":
+                    continue
+
+                # Priority 1: Daily predictions
+                if any(word in search_text for word in ["day", "daily", "today"]):
+                    eth_market = market
+                    market_priority = "daily"
+                    break
+
+                # Priority 2: Weekly predictions
+                if not eth_market and any(word in search_text for word in ["week", "weekly"]):
+                    eth_market = market
+                    market_priority = "weekly"
+                    continue
+
+                # Priority 3: Price target predictions
+                if not eth_market and any(word in search_text for word in ["above", "below", "higher", "lower", "reach"]):
+                    eth_market = market
+                    market_priority = "price_target"
+
+            if not eth_market:
+                return self._neutral_prediction("No active ETH markets on Kalshi")
+
+            # Get the probability from the market
+            # Kalshi uses "yes_bid" and "yes_ask" for probabilities
+            yes_bid = eth_market.get("yes_bid")
+            yes_ask = eth_market.get("yes_ask")
+
+            # Calculate bullish probability (average of bid/ask if both available)
+            if yes_bid is not None and yes_ask is not None:
+                # Kalshi prices are in cents (0-100)
+                bullish_probability = (yes_bid + yes_ask) / 2
+            elif yes_bid is not None:
+                bullish_probability = yes_bid
+            elif yes_ask is not None:
+                bullish_probability = yes_ask
+            else:
+                # Try last price
+                last_price = eth_market.get("last_price")
+                bullish_probability = last_price if last_price is not None else 50.0
+
+            result = {
+                "probability": bullish_probability,
+                "market_title": eth_market.get("title", "ETH Prediction"),
+                "market_type": market_priority,
+                "ticker": eth_market.get("ticker", ""),
+                "last_updated": datetime.now().isoformat(),
+                "available": True
+            }
+
+            # Cache the result
+            self.cache[cache_key] = (result, time.time())
+
+            return result
+
+        except Exception as e:
+            # Return neutral prediction on error
+            return self._neutral_prediction(f"Kalshi error: {str(e)}")
+
+    def _neutral_prediction(self, reason: str) -> Dict:
+        """Return a neutral 50% prediction with reason"""
+        return {
+            "probability": 50.0,
+            "market_title": reason,
+            "market_type": "none",
+            "ticker": "",
+            "last_updated": datetime.now().isoformat(),
+            "available": False
+        }
+
+# ==============================================================================
 # KRAKEN MARKET PROVIDER (Simplified for ETH and BTC tracking)
 # ==============================================================================
 
@@ -1775,6 +1906,7 @@ class ETHEURBot:
         self.market_hours = MarketHoursDetector()
         self.market = KrakenMarketProvider()
         self.polymarket = PolymarketProvider()
+        self.kalshi = KalshiProvider()
         self.opportunity_detector = ETHEUROpportunityDetector(config)
 
         # Connect market provider to opportunity detector for trend analysis
@@ -2428,8 +2560,8 @@ class ETHEURBot:
                     )
 
                     if is_downturn_in_upcycle:
-                        # Fetch Polymarket prediction
-                        print(f"\n   📊 Override Check (Polymarket + RSI)...")
+                        # Check prediction markets (Polymarket + Kalshi) and RSI
+                        print(f"\n   📊 Override Check (Polymarket + Kalshi + RSI)...")
                         print(f"      Detected downturn within upcycle (trend: {trend}, 3h: {change_3h:+.2f}%, 6h: {change_6h:+.2f}%)")
 
                         # Try Polymarket first
@@ -2450,6 +2582,26 @@ class ETHEURBot:
                                 override_reason = f"Polymarket {prob:.1f}% bullish despite downturn = local peak"
                             else:
                                 print(f"      Polymarket: {prob:.1f}% (need >60% for override)")
+
+                        # Try Kalshi if Polymarket didn't trigger
+                        if not override_triggered:
+                            kalshi_prediction = self.kalshi.get_eth_prediction()
+
+                            if kalshi_prediction:
+                                prob = kalshi_prediction["probability"]
+                                market_type = kalshi_prediction.get("market_type", "unknown")
+                                ticker = kalshi_prediction.get("ticker", "")
+                                print(f"      Kalshi ({market_type}): {prob:.1f}% bullish")
+                                print(f"      Market: {kalshi_prediction['market_title']}")
+                                if ticker:
+                                    print(f"      Ticker: {ticker}")
+
+                                # Same logic: high bullish sentiment during downturn = local peak
+                                if prob > 60 and kalshi_prediction.get("available", False):
+                                    override_triggered = True
+                                    override_reason = f"Kalshi {prob:.1f}% bullish despite downturn = local peak"
+                                else:
+                                    print(f"      Kalshi: {prob:.1f}% (need >60% for override)")
 
                         # RSI-based fallback: If Polymarket unavailable or didn't trigger, check RSI
                         if not override_triggered:
