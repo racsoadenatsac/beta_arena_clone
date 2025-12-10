@@ -2381,9 +2381,9 @@ class ETHEURBot:
 
                     # Check if we have trend information
                     trend = market_conditions.get("trend", "").lower()
-                    trend_details = market_conditions.get("trend_details", {})
-                    change_3h = trend_details.get("change_3h", 0)
-                    change_6h = trend_details.get("change_6h", 0)
+                    # trend_details are spread directly into market_conditions via **trend_details
+                    change_3h = market_conditions.get("change_3h", 0)
+                    change_6h = market_conditions.get("change_6h", 0)
 
                     # Detect "downturn within upcycle": trend is SIDEWAYS/DOWNTREND but 3h/6h still positive
                     is_downturn_in_upcycle = (
