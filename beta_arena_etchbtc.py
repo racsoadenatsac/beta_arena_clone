@@ -338,23 +338,24 @@ class IMessageNotifier:
         reasoning = trade_info.get("reasoning", "")
         eth_price = trade_info.get("eth_price", 0)
 
-        message = f"🔄 TRADE EXECUTED: {from_asset} → {to_asset}\n"
-        message += f"      Type: {trade_type}\n"
-        message += f"      Value: €{value:,.2f} | Fee: €{fee:.2f}\n"
+        message = f"TRADE EXECUTED: {from_asset} -> {to_asset}\n"
+        message += f"Type: {trade_type}\n"
+        message += f"ETH @TT: €{eth_price:,.2f}\n"
+        message += f"Value: €{value:,.2f} | Fee: €{fee:.2f}\n"
 
-        # Always show both positions in equivalence
+        # Always show both positions
         if to_asset == "EUR":
             # Just sold ETH for EUR - show EUR and equivalent ETH value
             equivalent_eth = new_qty / eth_price if eth_price > 0 else 0
-            message += f"      New Position EUR: €{new_qty:,.2f} (EUR)\n"
-            message += f"      New Position ETH: {equivalent_eth:.6f} (ETH)\n"
+            message += f"New Position EUR: €{new_qty:,.2f}\n"
+            message += f"New Position ETH: {equivalent_eth:.6f}\n"
         else:
             # Just bought ETH with EUR - show ETH and equivalent EUR value
             equivalent_eur = new_qty * new_price
-            message += f"      New Position EUR: €{equivalent_eur:,.2f} (EUR)\n"
-            message += f"      New Position ETH: {new_qty:.6f} (ETH)\n"
+            message += f"New Position EUR: €{equivalent_eur:,.2f}\n"
+            message += f"New Position ETH: {new_qty:.6f}\n"
 
-        message += f"      Reason: {reasoning}"
+        message += f"Reason: {reasoning}"
 
         return message
 
