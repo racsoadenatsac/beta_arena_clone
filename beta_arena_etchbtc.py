@@ -1065,41 +1065,48 @@ class ETHEUROpportunityDetector:
         opportunities = []
 
         eth_data = market["ETH"]
-        eth_price = market["ETH"].ask  # Price we'd pay to buy back ETH
+        eth_bid_price = market["ETH"].bid  # Price we'd get selling ETH
+        eth_ask_price = market["ETH"].ask  # Price we'd pay buying back ETH
+
+        # Calculate current ETH quantity from portfolio value
+        current_eth_qty = portfolio_value / eth_bid_price
 
         # Calculate what EUR value we'd get after exit
         expected_eur = portfolio_value * (1 - self.config.fee_rate)
 
         # ========================================================================
-        # CRITICAL: ETH RE-ENTRY GUARANTEE CHECK
+        # CRITICAL: ETH EQUIVALENT VALUE CHECK
         # ========================================================================
-        # Before exiting ETH→EUR, ensure we can later buy back MORE ETH than watermark
-        # This guarantees the ladder strategy: ETH always increases or we don't trade
+        # The EUR we receive must have an ETH-equivalent value GREATER than
+        # the ETH we currently hold. This ensures we don't lose ETH value in the trade.
 
-        # Calculate how much ETH we could buy back with the EUR (after both fees)
-        eur_after_reentry_fee = expected_eur * (1 - self.config.fee_rate)
-        potential_reentry_eth = eur_after_reentry_fee / eth_price
+        # Calculate ETH-equivalent value of the EUR after exit (at current ask price)
+        eth_equivalent_of_eur = expected_eur / eth_ask_price
 
-        # Require improvement over watermark to allow exit
-        required_reentry_eth = eth_watermark * (1 + min_improvement)
-        can_guarantee_improvement = potential_reentry_eth > required_reentry_eth
+        # The EUR's ETH-equivalent must be greater than current ETH position
+        # AND greater than the watermark to ensure ladder strategy
+        min_required_eth_equivalent = max(current_eth_qty, eth_watermark) * (1 + min_improvement)
+        can_maintain_eth_value = eth_equivalent_of_eur > min_required_eth_equivalent
 
-        if not can_guarantee_improvement:
-            # CANNOT guarantee we can buy back more ETH - BLOCK THE EXIT
-            deficit = required_reentry_eth - potential_reentry_eth
-            deficit_pct = (deficit / eth_watermark) * 100
+        if not can_maintain_eth_value:
+            # EUR's ETH-equivalent is LESS than our current ETH - LOSING TRADE - BLOCK IT
+            deficit = min_required_eth_equivalent - eth_equivalent_of_eur
+            deficit_pct = (deficit / current_eth_qty) * 100
 
-            print(f"      🔍 Hold/Exit Analysis: Checking if exit can guarantee ETH growth")
-            print(f"         ❌ CANNOT guarantee ETH improvement on re-entry")
-            print(f"         Current ETH watermark: {eth_watermark:.6f} ETH")
-            print(f"         Required re-entry: {required_reentry_eth:.6f} ETH (+{min_improvement*100:.2f}%)")
-            print(f"         Potential re-entry: {potential_reentry_eth:.6f} ETH")
-            print(f"         Short by {deficit:.6f} ETH ({deficit_pct:.2f}%)")
-            print(f"         ⏸️ HOLDING ETH - waiting for higher EUR price")
+            print(f"      🔍 Hold/Exit Analysis: Checking ETH-equivalent value preservation")
+            print(f"         ❌ EXIT WOULD LOSE ETH VALUE")
+            print(f"         Current ETH position: {current_eth_qty:.6f} ETH")
+            print(f"         EUR after exit: €{expected_eur:,.2f}")
+            print(f"         ETH-equivalent of EUR: {eth_equivalent_of_eur:.6f} ETH")
+            print(f"         Required minimum: {min_required_eth_equivalent:.6f} ETH")
+            print(f"         Would lose {deficit:.6f} ETH ({deficit_pct:.2f}%)")
+            print(f"         ⏸️ HOLDING ETH - exit would decrease ETH value")
             return opportunities  # Return empty - exit blocked
 
-        # If we got here, exit can guarantee ETH growth on re-entry
-        print(f"      ✅ Exit validated: Can guarantee {potential_reentry_eth:.6f} ETH on re-entry (need {required_reentry_eth:.6f})")
+        # If we got here, EUR's ETH-equivalent preserves/grows ETH value
+        eth_value_gain = eth_equivalent_of_eur - current_eth_qty
+        eth_value_gain_pct = (eth_value_gain / current_eth_qty) * 100
+        print(f"      ✅ Exit validated: EUR worth {eth_equivalent_of_eur:.6f} ETH (have {current_eth_qty:.6f} ETH, gain {eth_value_gain_pct:+.2f}%)")
 
         # ========================================================================
         # SPECIAL CASE: Initial exit from starting position (EUR watermark = 0)
