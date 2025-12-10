@@ -1065,9 +1065,41 @@ class ETHEUROpportunityDetector:
         opportunities = []
 
         eth_data = market["ETH"]
+        eth_price = market["ETH"].ask  # Price we'd pay to buy back ETH
 
         # Calculate what EUR value we'd get after exit
         expected_eur = portfolio_value * (1 - self.config.fee_rate)
+
+        # ========================================================================
+        # CRITICAL: ETH RE-ENTRY GUARANTEE CHECK
+        # ========================================================================
+        # Before exiting ETH→EUR, ensure we can later buy back MORE ETH than watermark
+        # This guarantees the ladder strategy: ETH always increases or we don't trade
+
+        # Calculate how much ETH we could buy back with the EUR (after both fees)
+        eur_after_reentry_fee = expected_eur * (1 - self.config.fee_rate)
+        potential_reentry_eth = eur_after_reentry_fee / eth_price
+
+        # Require improvement over watermark to allow exit
+        required_reentry_eth = eth_watermark * (1 + min_improvement)
+        can_guarantee_improvement = potential_reentry_eth > required_reentry_eth
+
+        if not can_guarantee_improvement:
+            # CANNOT guarantee we can buy back more ETH - BLOCK THE EXIT
+            deficit = required_reentry_eth - potential_reentry_eth
+            deficit_pct = (deficit / eth_watermark) * 100
+
+            print(f"      🔍 Hold/Exit Analysis: Checking if exit can guarantee ETH growth")
+            print(f"         ❌ CANNOT guarantee ETH improvement on re-entry")
+            print(f"         Current ETH watermark: {eth_watermark:.6f} ETH")
+            print(f"         Required re-entry: {required_reentry_eth:.6f} ETH (+{min_improvement*100:.2f}%)")
+            print(f"         Potential re-entry: {potential_reentry_eth:.6f} ETH")
+            print(f"         Short by {deficit:.6f} ETH ({deficit_pct:.2f}%)")
+            print(f"         ⏸️ HOLDING ETH - waiting for higher EUR price")
+            return opportunities  # Return empty - exit blocked
+
+        # If we got here, exit can guarantee ETH growth on re-entry
+        print(f"      ✅ Exit validated: Can guarantee {potential_reentry_eth:.6f} ETH on re-entry (need {required_reentry_eth:.6f})")
 
         # ========================================================================
         # SPECIAL CASE: Initial exit from starting position (EUR watermark = 0)
