@@ -83,6 +83,7 @@ class Config:
     
     # API Keys
     grok_api_key: str = os.getenv("GROK_API_KEY", "")
+    kalshi_api_key: str = os.getenv("KALSHI_API_KEY", "")
     
     # Notifications
     enable_imessage: bool = True
@@ -567,9 +568,10 @@ class PolymarketProvider:
 class KalshiProvider:
     """Fetch ETH price predictions from Kalshi prediction markets"""
 
-    def __init__(self):
+    def __init__(self, api_key: str = ""):
         self.base_url = "https://trading-api.kalshi.com"
         self.api_version = "v2"
+        self.api_key = api_key
         self.cache = {}
         self.cache_duration = 60  # Cache predictions for 1 minute
 
@@ -597,7 +599,12 @@ class KalshiProvider:
                 "status": "open"
             }
 
-            response = requests.get(search_url, params=params, timeout=5)
+            # Add authentication headers if API key is provided
+            headers = {}
+            if self.api_key:
+                headers["Authorization"] = f"Bearer {self.api_key}"
+
+            response = requests.get(search_url, params=params, headers=headers, timeout=5)
             if response.status_code != 200:
                 return self._neutral_prediction(f"Kalshi API HTTP {response.status_code}")
 
@@ -1914,7 +1921,7 @@ class ETHEURBot:
         self.market_hours = MarketHoursDetector()
         self.market = KrakenMarketProvider()
         self.polymarket = PolymarketProvider()
-        self.kalshi = KalshiProvider()
+        self.kalshi = KalshiProvider(config.kalshi_api_key)
         self.opportunity_detector = ETHEUROpportunityDetector(config)
 
         # Connect market provider to opportunity detector for trend analysis
