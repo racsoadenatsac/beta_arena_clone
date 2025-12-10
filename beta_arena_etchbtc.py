@@ -30,6 +30,8 @@ import sqlite3
 import hashlib
 from collections import deque
 import pytz
+import base64
+import hmac
 
 # ==============================================================================
 # CONFIGURATION
