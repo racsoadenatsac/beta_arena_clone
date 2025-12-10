@@ -1525,19 +1525,13 @@ WHEN HOLDING ETH (hold_or_exit):
    - SIDEWAYS: EXIT NOW if profit >0.26% - momentum lost, take profits. SIDEWAYS means the rally is OVER.
    - DOWNTREND: EXIT NOW if profit >0.26% - tide has turned, exit immediately
 8. CRITICAL: SIDEWAYS IS NOT UPTREND. If trend shows SIDEWAYS, the wave has ended. Exit to lock in profits.
-9. STOP-LOSS FOR SIDEWAYS/DOWNTREND AT A LOSS: If you're at a loss (profit <0%) AND trend is SIDEWAYS or DOWNTREND:
-   - SIDEWAYS + loss + >30 minutes elapsed = EXIT to limit damage. No momentum for recovery.
-   - DOWNTREND + loss = EXIT IMMEDIATELY regardless of time. Price declining, cut losses.
-   - Don't hold losing SIDEWAYS/DOWNTREND positions hoping for recovery - no momentum exists.
-   - Taking an extra -0.26% fee is better than watching losses compound.
-10. 1-HOUR EXIT WINDOW: Check "minutes_since_midpoint_exceeded". Provides urgency for SIDEWAYS/DOWNTREND:
+9. 1-HOUR EXIT WINDOW: Check "minutes_since_midpoint_exceeded". Provides urgency for SIDEWAYS/DOWNTREND:
    - >50 minutes + SIDEWAYS + profit >0.26% = MANDATORY EXIT
    - Time limit is REMOVED only during UPTREND (any strength)
-11. EXIT if: profit > 0.26% AND (DOWNTREND OR SIDEWAYS OR RSI >75 OR profit >2% OR [>50min + SIDEWAYS])
-12. EXIT if: profit < 0% AND (DOWNTREND OR [SIDEWAYS + >30min]) - stop-loss for losing positions
-13. HOLD if: profit < 0.26% AND trend = "UPTREND" - wait for recovery during uptrend only
-14. HOLD if: trend = "UPTREND" (any strength) - ride the wave regardless of time
-15. MANDATORY EXIT: If SIDEWAYS + profit >1% + >50min window = EXIT IMMEDIATELY. This is excellent profit with no upward momentum.
+10. EXIT if: profit > 0.26% AND (DOWNTREND OR SIDEWAYS OR RSI >75 OR profit >2% OR [>50min + SIDEWAYS])
+11. HOLD if: profit < 0.26% - doesn't cover exit fee
+12. HOLD if: trend = "UPTREND" (any strength) - ride the wave regardless of time
+13. MANDATORY EXIT: If SIDEWAYS + profit >1% + >50min window = EXIT IMMEDIATELY. This is excellent profit with no upward momentum.
 
 WHEN HOLDING EUR (hold_or_enter):
 14. STOP LOSS OVERRIDE: If opportunity type is "stop_loss", ALWAYS execute immediately - no exceptions. This means we've lost €2,000+ and must return to our safe ETH position.
