@@ -1037,8 +1037,8 @@ class ETHEUROpportunityDetector:
         elif current_asset == "ETH":
             # Check for EUR exit signals
             exit_ops = self._detect_eur_exit(
-                market, profit_pct, btc_price, eth_price, portfolio_value, watermark, eur_watermark, market_info,
-                eth_6h_high, eth_6h_low
+                market, profit_pct, btc_price, eth_price, portfolio_value, watermark, eur_watermark,
+                min_improvement, market_info, eth_6h_high, eth_6h_low
             )
             opportunities.extend(exit_ops)
             
@@ -1055,8 +1055,8 @@ class ETHEUROpportunityDetector:
     
     def _detect_eur_exit(self, market: Dict, profit_pct: float,
                         btc_price: float, eth_price: float, portfolio_value: float,
-                        eth_watermark: float, eur_watermark: float, market_info: Dict,
-                        eth_6h_high: Optional[float], eth_6h_low: Optional[float]) -> List[TradeOpportunity]:
+                        eth_watermark: float, eur_watermark: float, min_improvement: float,
+                        market_info: Dict, eth_6h_high: Optional[float], eth_6h_low: Optional[float]) -> List[TradeOpportunity]:
         """Detect opportunities to exit to EUR (STRICT EUR watermark enforcement)
 
         Only returns opportunities if EUR watermark can be beaten by min_eur_improvement (0.1%).
