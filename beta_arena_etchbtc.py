@@ -443,69 +443,100 @@ class PolymarketProvider:
         self.cache = {}
         self.cache_duration = 60  # Cache predictions for 1 minute
 
-    def get_eth_hourly_prediction(self) -> Optional[Dict]:
+    def get_eth_prediction(self) -> Optional[Dict]:
         """
-        Get Polymarket prediction for 'Will ETH be up this hour?'
+        Get Polymarket prediction for ETH price movement.
+        Searches for any active ETH prediction markets (hourly, daily, price targets, etc.)
 
         Returns:
-            Dict with 'probability' (0-100), 'market_title', 'last_updated'
+            Dict with 'probability' (0-100), 'market_title', 'last_updated', 'available'
             None if unable to fetch
         """
         try:
             # Check cache first
-            cache_key = "eth_hourly"
+            cache_key = "eth_prediction"
             if cache_key in self.cache:
                 cached_data, cached_time = self.cache[cache_key]
                 if time.time() - cached_time < self.cache_duration:
                     return cached_data
 
-            # Search for ETH hourly markets
-            # Polymarket's API endpoint for searching markets
+            # Search for ETH prediction markets
+            # Try multiple search strategies
             search_url = f"{self.gamma_url}/markets"
+
+            # First try: search with ETH keyword
             params = {
-                "limit": 10,
+                "limit": 50,  # Increased to find more markets
                 "active": "true"
             }
 
             response = requests.get(search_url, params=params, timeout=5)
             if response.status_code != 200:
-                return None
+                return self._neutral_prediction("API error")
 
             markets = response.json()
 
-            # Look for ETH hourly prediction market
+            # Search for ETH markets with priority ordering:
+            # 1. Hourly predictions (most immediate)
+            # 2. Daily predictions (very relevant)
+            # 3. Weekly predictions (still useful)
+            # 4. Price target predictions (useful for direction)
             eth_market = None
+            market_priority = None
+
             for market in markets:
                 title = market.get("question", "").lower()
-                if "eth" in title and ("hour" in title or "hourly" in title):
+
+                # Skip non-ETH markets
+                if "eth" not in title and "ethereum" not in title:
+                    continue
+
+                # Priority 1: Hourly predictions
+                if "hour" in title or "hourly" in title:
                     eth_market = market
+                    market_priority = "hourly"
                     break
 
+                # Priority 2: Daily predictions (only if we haven't found hourly)
+                if not eth_market and ("today" in title or "daily" in title or "day" in title):
+                    eth_market = market
+                    market_priority = "daily"
+                    continue
+
+                # Priority 3: Weekly predictions
+                if not eth_market and ("week" in title or "weekly" in title):
+                    eth_market = market
+                    market_priority = "weekly"
+                    continue
+
+                # Priority 4: Price predictions (higher/lower, up/down)
+                if not eth_market and any(word in title for word in ["higher", "lower", "above", "below", "up", "down", "rise", "fall"]):
+                    eth_market = market
+                    market_priority = "price_target"
+
             if not eth_market:
-                # No hourly ETH market found, return neutral prediction
-                return {
-                    "probability": 50.0,
-                    "market_title": "No active ETH hourly market",
-                    "last_updated": datetime.now().isoformat(),
-                    "available": False
-                }
+                # No ETH market found
+                return self._neutral_prediction("No active ETH prediction markets")
 
             # Get the probability from the market
             # Polymarket uses outcomes with probabilities
             outcomes = eth_market.get("outcomes", [])
-            up_probability = None
+            bullish_probability = None
 
+            # Look for bullish indicators
             for outcome in outcomes:
-                if outcome.get("outcome", "").lower() in ["yes", "up", "higher"]:
-                    up_probability = float(outcome.get("price", 0.5)) * 100
+                outcome_text = outcome.get("outcome", "").lower()
+                if any(word in outcome_text for word in ["yes", "up", "higher", "above", "rise"]):
+                    bullish_probability = float(outcome.get("price", 0.5)) * 100
                     break
 
-            if up_probability is None:
-                up_probability = 50.0
+            if bullish_probability is None:
+                bullish_probability = 50.0
 
             result = {
-                "probability": up_probability,
-                "market_title": eth_market.get("question", "ETH Hourly"),
+                "probability": bullish_probability,
+                "market_title": eth_market.get("question", "ETH Prediction"),
+                "market_type": market_priority,
                 "last_updated": datetime.now().isoformat(),
                 "available": True
             }
@@ -517,12 +548,17 @@ class PolymarketProvider:
 
         except Exception as e:
             # Return neutral prediction on error
-            return {
-                "probability": 50.0,
-                "market_title": f"Error: {str(e)}",
-                "last_updated": datetime.now().isoformat(),
-                "available": False
-            }
+            return self._neutral_prediction(f"Error: {str(e)}")
+
+    def _neutral_prediction(self, reason: str) -> Dict:
+        """Return a neutral 50% prediction with reason"""
+        return {
+            "probability": 50.0,
+            "market_title": reason,
+            "market_type": "none",
+            "last_updated": datetime.now().isoformat(),
+            "available": False
+        }
 
 # ==============================================================================
 # KRAKEN MARKET PROVIDER (Simplified for ETH and BTC tracking)
@@ -2393,30 +2429,59 @@ class ETHEURBot:
 
                     if is_downturn_in_upcycle:
                         # Fetch Polymarket prediction
-                        print(f"\n   📊 Polymarket Override Check...")
+                        print(f"\n   📊 Override Check (Polymarket + RSI)...")
                         print(f"      Detected downturn within upcycle (trend: {trend}, 3h: {change_3h:+.2f}%, 6h: {change_6h:+.2f}%)")
 
-                        poly_prediction = self.polymarket.get_eth_hourly_prediction()
+                        # Try Polymarket first
+                        poly_prediction = self.polymarket.get_eth_prediction()
+                        override_triggered = False
+                        override_reason = ""
 
                         if poly_prediction:
                             prob = poly_prediction["probability"]
-                            print(f"      Polymarket: ETH up this hour? {prob:.1f}%")
+                            market_type = poly_prediction.get("market_type", "unknown")
+                            print(f"      Polymarket ({market_type}): {prob:.1f}% bullish")
                             print(f"      Market: {poly_prediction['market_title']}")
 
                             # If Polymarket says ETH will be UP (>60%), and we're seeing a downturn,
                             # this suggests we're near a local peak - override Grok and SELL
                             if prob > 60 and poly_prediction.get("available", False):
-                                print(f"\n   ⚠️ POLYMARKET OVERRIDE: Force exit")
-                                print(f"      Reasoning: High bullish sentiment ({prob:.1f}%) despite downturn = local peak")
-                                print(f"      Action: SELL to lock in gains before reversal")
-
-                                # Override Grok's HOLD decision
-                                selected = exit_opp
-                                print(f"\n   🤖 Executing override decision...")
-                                self.execute_trade(selected, market)
-                                return  # Exit early to prevent duplicate processing
+                                override_triggered = True
+                                override_reason = f"Polymarket {prob:.1f}% bullish despite downturn = local peak"
                             else:
-                                print(f"      No override: Polymarket {prob:.1f}% (need >60%)")
+                                print(f"      Polymarket: {prob:.1f}% (need >60% for override)")
+
+                        # RSI-based fallback: If Polymarket unavailable or didn't trigger, check RSI
+                        if not override_triggered:
+                            rsi = market_conditions.get("rsi")
+                            profit_pct = market_conditions.get("profit_pct", 0)
+
+                            if rsi and rsi > 70:
+                                # SIDEWAYS + Overbought RSI + at a loss = strong exit signal
+                                print(f"      RSI: {rsi:.0f} (Overbought >70)")
+                                if profit_pct < 0:
+                                    override_triggered = True
+                                    override_reason = f"SIDEWAYS + Overbought RSI {rsi:.0f} + Loss {profit_pct:.2f}%"
+                                    print(f"      ⚠️ RSI Override: Overbought + losing position in sideways market")
+                                else:
+                                    print(f"      RSI suggests caution but profit is positive ({profit_pct:+.2f}%)")
+                            else:
+                                rsi_text = f"{rsi:.0f}" if rsi else "N/A"
+                                print(f"      RSI: {rsi_text} (need >70 for override)")
+
+                        # Execute override if triggered
+                        if override_triggered:
+                            print(f"\n   ⚠️ OVERRIDE TRIGGERED: Force exit")
+                            print(f"      Reasoning: {override_reason}")
+                            print(f"      Action: SELL to prevent further losses / lock in gains")
+
+                            # Override Grok's HOLD decision
+                            selected = exit_opp
+                            print(f"\n   🤖 Executing override decision...")
+                            self.execute_trade(selected, market)
+                            return  # Exit early to prevent duplicate processing
+                        else:
+                            print(f"      No override triggered - continuing to HOLD")
 
                 # If we're tracking consensus but Grok says hold, record it
                 if self.current_position and self.current_position.symbol == "EUR":
