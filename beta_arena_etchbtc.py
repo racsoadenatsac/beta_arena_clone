@@ -460,8 +460,11 @@ class KalshiProvider:
                     password=None,
                     backend=default_backend()
                 )
+                print(f"✅ Kalshi: Private key loaded successfully")
             except Exception as e:
                 print(f"⚠️ Kalshi: Failed to parse private key: {e}")
+        else:
+            print(f"⚠️ Kalshi: No private key provided")
 
     def _create_signature(self, timestamp: str, method: str, path: str) -> Optional[str]:
         """Create RSA signature for Kalshi API request"""
@@ -504,11 +507,15 @@ class KalshiProvider:
 
             # Search for ETH markets on Kalshi with RSA authentication
             path = f"/trade-api/{self.api_version}/markets"
-            search_url = f"{self.base_url}{path}"
             params = {
                 "limit": 100,
                 "status": "open"
             }
+
+            # Build query string for signature
+            query_string = "&".join([f"{k}={v}" for k, v in sorted(params.items())])
+            path_with_query = f"{path}?{query_string}"
+            search_url = f"{self.base_url}{path_with_query}"
 
             # Create RSA signature authentication headers
             headers = {}
@@ -516,16 +523,28 @@ class KalshiProvider:
                 # Generate timestamp in milliseconds
                 timestamp = str(int(time.time() * 1000))
 
-                # Create signature
-                signature = self._create_signature(timestamp, "GET", path)
+                # Create signature with full path including query string
+                signature = self._create_signature(timestamp, "GET", path_with_query)
 
                 if signature:
                     headers["KALSHI-ACCESS-KEY"] = self.api_key
                     headers["KALSHI-ACCESS-SIGNATURE"] = signature
                     headers["KALSHI-ACCESS-TIMESTAMP"] = timestamp
+                    print(f"🔐 Kalshi: Auth headers created (timestamp: {timestamp}, path: {path_with_query})")
+                else:
+                    print(f"⚠️ Kalshi: Signature creation failed")
+            elif not self.api_key:
+                print(f"⚠️ Kalshi: No API key available")
+            elif not self.private_key:
+                print(f"⚠️ Kalshi: No private key available")
 
-            response = requests.get(search_url, params=params, headers=headers, timeout=5)
+            response = requests.get(search_url, headers=headers, timeout=5)
             if response.status_code != 200:
+                try:
+                    error_detail = response.json()
+                    print(f"⚠️ Kalshi API error {response.status_code}: {error_detail}")
+                except:
+                    print(f"⚠️ Kalshi API error {response.status_code}: {response.text[:200]}")
                 return self._neutral_prediction(f"Kalshi API HTTP {response.status_code}")
 
             try:
