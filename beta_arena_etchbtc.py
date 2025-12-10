@@ -338,7 +338,7 @@ class IMessageNotifier:
         reasoning = trade_info.get("reasoning", "")
         eth_price = trade_info.get("eth_price", 0)
 
-        message = f"TRADE EXECUTED: {from_asset} -> {to_asset}\n"
+        message = f"🔄 TRADE EXECUTED: {from_asset} → {to_asset}\n"
         message += f"Type: {trade_type}\n"
         message += f"ETH @TT: €{eth_price:,.2f}\n"
         message += f"Value: €{value:,.2f} | Fee: €{fee:.2f}\n"
