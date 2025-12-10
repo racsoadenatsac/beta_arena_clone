@@ -599,10 +599,18 @@ class KalshiProvider:
 
             response = requests.get(search_url, params=params, timeout=5)
             if response.status_code != 200:
-                return self._neutral_prediction("Kalshi API error")
+                return self._neutral_prediction(f"Kalshi API HTTP {response.status_code}")
 
-            data = response.json()
+            try:
+                data = response.json()
+            except Exception as e:
+                return self._neutral_prediction(f"Kalshi JSON parse error: {str(e)}")
+
             markets = data.get("markets", [])
+
+            # If no markets returned, might be API structure issue
+            if not isinstance(markets, list):
+                return self._neutral_prediction(f"Kalshi unexpected response format")
 
             # Search for ETH markets with priority ordering
             eth_market = None
