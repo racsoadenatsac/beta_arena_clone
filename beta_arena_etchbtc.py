@@ -446,7 +446,7 @@ class KalshiProvider:
     """Fetch ETH price predictions from Kalshi prediction markets with RSA authentication"""
 
     def __init__(self, api_key: str = "", private_key_pem: str = ""):
-        self.base_url = "https://trading-api.kalshi.com"
+        self.base_url = "https://api.elections.kalshi.com"
         self.api_version = "v2"
         self.api_key = api_key
         self.cache = {}
