@@ -1075,38 +1075,41 @@ class ETHEUROpportunityDetector:
         expected_eur = portfolio_value * (1 - self.config.fee_rate)
 
         # ========================================================================
-        # CRITICAL: ETH EQUIVALENT VALUE CHECK
+        # CRITICAL: ETH EQUIVALENT VALUE CHECK (for subsequent exits only)
         # ========================================================================
-        # The EUR we receive must have an ETH-equivalent value GREATER than
-        # the ETH we currently hold. This ensures we don't lose ETH value in the trade.
+        # After the first trade cycle, ensure EUR maintains ETH-equivalent value
+        # For INITIAL exit, skip this check and let Grok decide (fees make it impossible to maintain value on first exit)
 
-        # Calculate ETH-equivalent value of the EUR after exit (at current ask price)
-        eth_equivalent_of_eur = expected_eur / eth_ask_price
+        if eur_watermark > 0:
+            # We've already exited once before - enforce strict ETH value preservation
 
-        # The EUR's ETH-equivalent must be greater than current ETH position
-        # AND greater than the watermark to ensure ladder strategy
-        min_required_eth_equivalent = max(current_eth_qty, eth_watermark) * (1 + min_improvement)
-        can_maintain_eth_value = eth_equivalent_of_eur > min_required_eth_equivalent
+            # Calculate ETH-equivalent value of the EUR after exit (at current ask price)
+            eth_equivalent_of_eur = expected_eur / eth_ask_price
 
-        if not can_maintain_eth_value:
-            # EUR's ETH-equivalent is LESS than our current ETH - LOSING TRADE - BLOCK IT
-            deficit = min_required_eth_equivalent - eth_equivalent_of_eur
-            deficit_pct = (deficit / current_eth_qty) * 100
+            # The EUR's ETH-equivalent must be greater than current ETH position
+            # AND greater than the watermark to ensure ladder strategy
+            min_required_eth_equivalent = max(current_eth_qty, eth_watermark) * (1 + min_improvement)
+            can_maintain_eth_value = eth_equivalent_of_eur > min_required_eth_equivalent
 
-            print(f"      🔍 Hold/Exit Analysis: Checking ETH-equivalent value preservation")
-            print(f"         ❌ EXIT WOULD LOSE ETH VALUE")
-            print(f"         Current ETH position: {current_eth_qty:.6f} ETH")
-            print(f"         EUR after exit: €{expected_eur:,.2f}")
-            print(f"         ETH-equivalent of EUR: {eth_equivalent_of_eur:.6f} ETH")
-            print(f"         Required minimum: {min_required_eth_equivalent:.6f} ETH")
-            print(f"         Would lose {deficit:.6f} ETH ({deficit_pct:.2f}%)")
-            print(f"         ⏸️ HOLDING ETH - exit would decrease ETH value")
-            return opportunities  # Return empty - exit blocked
+            if not can_maintain_eth_value:
+                # EUR's ETH-equivalent is LESS than our current ETH - LOSING TRADE - BLOCK IT
+                deficit = min_required_eth_equivalent - eth_equivalent_of_eur
+                deficit_pct = (deficit / current_eth_qty) * 100
 
-        # If we got here, EUR's ETH-equivalent preserves/grows ETH value
-        eth_value_gain = eth_equivalent_of_eur - current_eth_qty
-        eth_value_gain_pct = (eth_value_gain / current_eth_qty) * 100
-        print(f"      ✅ Exit validated: EUR worth {eth_equivalent_of_eur:.6f} ETH (have {current_eth_qty:.6f} ETH, gain {eth_value_gain_pct:+.2f}%)")
+                print(f"      🔍 Hold/Exit Analysis: Checking ETH-equivalent value preservation")
+                print(f"         ❌ EXIT WOULD LOSE ETH VALUE")
+                print(f"         Current ETH position: {current_eth_qty:.6f} ETH")
+                print(f"         EUR after exit: €{expected_eur:,.2f}")
+                print(f"         ETH-equivalent of EUR: {eth_equivalent_of_eur:.6f} ETH")
+                print(f"         Required minimum: {min_required_eth_equivalent:.6f} ETH")
+                print(f"         Would lose {deficit:.6f} ETH ({deficit_pct:.2f}%)")
+                print(f"         ⏸️ HOLDING ETH - exit would decrease ETH value")
+                return opportunities  # Return empty - exit blocked
+
+            # If we got here, EUR's ETH-equivalent preserves/grows ETH value
+            eth_value_gain = eth_equivalent_of_eur - current_eth_qty
+            eth_value_gain_pct = (eth_value_gain / current_eth_qty) * 100
+            print(f"      ✅ Exit validated: EUR worth {eth_equivalent_of_eur:.6f} ETH (have {current_eth_qty:.6f} ETH, gain {eth_value_gain_pct:+.2f}%)")
 
         # ========================================================================
         # SPECIAL CASE: Initial exit from starting position (EUR watermark = 0)
