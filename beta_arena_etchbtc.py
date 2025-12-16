@@ -2679,7 +2679,10 @@ class ETHEURBot:
                     if user_response and user_response.lower() == 'y':
                         print(f"\n   👤 USER OVERRIDE: Forcing trade execution")
                         print(f"      Direction: {opp.from_asset} → {opp.to_asset}")
-                        print(f"      Expected: {opp.expected_quantity:.6f} {opp.to_asset}")
+                        if opp.expected_quantity is not None:
+                            print(f"      Expected: {opp.expected_quantity:.6f} {opp.to_asset}")
+                        else:
+                            print(f"      Expected: (will calculate based on current price)")
                         print(f"      Reason: User manual override")
 
                         # Reset consensus tracking if active
