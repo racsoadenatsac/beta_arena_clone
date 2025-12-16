@@ -35,6 +35,9 @@ import hmac
 from cryptography.hazmat.primitives import serialization, hashes
 from cryptography.hazmat.primitives.asymmetric import padding
 from cryptography.hazmat.backends import default_backend
+import select
+import termios
+import tty
 
 # ==============================================================================
 # CONFIGURATION
@@ -1832,6 +1835,52 @@ Respond with JSON:
         return opportunities[0] if opportunities else None
 
 # ==============================================================================
+# HELPER FUNCTIONS
+# ==============================================================================
+
+def get_user_input_with_timeout(prompt: str, timeout: float = 3.0) -> Optional[str]:
+    """
+    Get user input with a timeout (non-blocking).
+    Returns user input if provided within timeout, otherwise None.
+    Works on Unix-like systems (Linux/macOS).
+    """
+    try:
+        # Save current terminal settings
+        old_settings = termios.tcgetattr(sys.stdin)
+
+        try:
+            # Set terminal to raw mode for immediate input
+            tty.setraw(sys.stdin.fileno())
+
+            # Display prompt
+            sys.stdout.write(f"\n{prompt} ")
+            sys.stdout.flush()
+
+            # Wait for input with timeout
+            ready, _, _ = select.select([sys.stdin], [], [], timeout)
+
+            if ready:
+                # Read single character
+                char = sys.stdin.read(1)
+                sys.stdout.write(f"{char}\n")
+                sys.stdout.flush()
+                return char
+            else:
+                # Timeout - no input
+                sys.stdout.write("\n")
+                sys.stdout.flush()
+                return None
+
+        finally:
+            # Restore terminal settings
+            termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
+
+    except Exception as e:
+        # Fallback: if anything fails, just return None
+        print(f"\n⚠️ Input error: {e}")
+        return None
+
+# ==============================================================================
 # MAIN BOT
 # ==============================================================================
 
@@ -2620,7 +2669,29 @@ class ETHEURBot:
                             remaining = 5.0 - elapsed_minutes
                             print(f"      📊 Consensus tracking: {total_checks} checks, {remaining:.1f}min remaining")
                             print(f"      Current agreement: {buy_votes}/{total_checks} ({buy_pct:.0f}%)")
-        
+
+                # USER OVERRIDE: Give user opportunity to force a trade despite HOLD decision
+                if opportunities:
+                    # Show user the first opportunity and ask if they want to trade
+                    opp = opportunities[0]
+                    user_response = get_user_input_with_timeout("💡 Trade? y", timeout=3.0)
+
+                    if user_response and user_response.lower() == 'y':
+                        print(f"\n   👤 USER OVERRIDE: Forcing trade execution")
+                        print(f"      Direction: {opp.from_asset} → {opp.to_asset}")
+                        print(f"      Expected: {opp.expected_quantity:.6f} {opp.to_asset}")
+                        print(f"      Reason: User manual override")
+
+                        # Reset consensus tracking if active
+                        if self.eth_entry_consensus_start is not None:
+                            print(f"      Resetting consensus tracking (user override)")
+                            self.eth_entry_consensus_start = None
+                            self.eth_entry_decisions = []
+
+                        # Execute the trade
+                        self.execute_trade(opp, market)
+                        return  # Exit iteration after executing user override trade
+
         # Log performance
         self.cursor.execute("""
             INSERT INTO performance (timestamp, portfolio_value, profit_pct, current_asset,
