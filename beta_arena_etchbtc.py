@@ -1838,7 +1838,7 @@ Respond with JSON:
 # HELPER FUNCTIONS
 # ==============================================================================
 
-def get_user_input_with_timeout(prompt: str, timeout: float = 3.0) -> Optional[str]:
+def get_user_input_with_timeout(prompt: str, timeout: float = 25.0) -> Optional[str]:
     """
     Get user input with a timeout (non-blocking).
     Returns user input if provided within timeout, otherwise None.
@@ -2674,7 +2674,7 @@ class ETHEURBot:
                 if opportunities:
                     # Show user the first opportunity and ask if they want to trade
                     opp = opportunities[0]
-                    user_response = get_user_input_with_timeout("💡 Trade? y", timeout=3.0)
+                    user_response = get_user_input_with_timeout("💡 Trade? y", timeout=25.0)
 
                     if user_response and user_response.lower() == 'y':
                         print(f"\n   👤 USER OVERRIDE: Forcing trade execution")
