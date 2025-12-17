@@ -2544,6 +2544,26 @@ class ETHEURBot:
                         print(f"      📊 Collecting opinions... ({total_checks} checks, {remaining:.1f}min remaining)")
                         print(f"      Current agreement: {buy_votes}/{total_checks} ({buy_pct:.0f}%)")
 
+                        # USER OVERRIDE: Allow user to force immediate execution during consensus
+                        user_response = get_user_input_with_timeout("💡 Buy ETH now? y", timeout=25.0)
+
+                        if user_response and user_response.lower() == 'y':
+                            print(f"\n   👤 USER OVERRIDE: Forcing immediate BUY execution")
+                            print(f"      Direction: {selected.from_asset} → {selected.to_asset}")
+                            if selected.expected_quantity is not None:
+                                print(f"      Expected: {selected.expected_quantity:.6f} {selected.to_asset}")
+                            else:
+                                print(f"      Expected: (will calculate based on current price)")
+                            print(f"      Reason: User manual override (bypassing consensus)")
+
+                            # Reset consensus tracking
+                            self.eth_entry_consensus_start = None
+                            self.eth_entry_decisions = []
+
+                            # Execute trade immediately
+                            self.execute_trade(selected, market)
+                            return  # Exit iteration after executing user override trade
+
                 # ETH→EUR exits: Execute immediately (no consensus needed)
                 else:
                     print(f"\n   🤖 Executing Grok's decision...")
@@ -2674,7 +2694,12 @@ class ETHEURBot:
                 if opportunities:
                     # Show user the first opportunity and ask if they want to trade
                     opp = opportunities[0]
-                    user_response = get_user_input_with_timeout("💡 Trade? y", timeout=25.0)
+                    # Create prompt based on direction
+                    if opp.to_asset == "ETH":
+                        prompt_msg = "💡 Buy ETH now? y"
+                    else:
+                        prompt_msg = "💡 Sell to EUR now? y"
+                    user_response = get_user_input_with_timeout(prompt_msg, timeout=25.0)
 
                     if user_response and user_response.lower() == 'y':
                         print(f"\n   👤 USER OVERRIDE: Forcing trade execution")
