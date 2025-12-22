@@ -484,7 +484,7 @@ class FourHourRangeBot:
             print(f"   €{self.current_position.quantity:,.2f}")
 
         print(f"\n🏔️ WATERMARK:")
-        print(f"   ETH: {self.watermark.get():.6f} ETH (must beat by {self.config.min_improvement_base*100:.2f}%)")
+        print(f"   ETH: {self.watermark.get():.6f} ETH (tracking only)")
 
         print(f"\n📊 4-HOUR RANGE ({self.four_hour_range.date}):")
         print(f"   High: €{self.four_hour_range.range_high:,.2f}")
@@ -555,25 +555,17 @@ class FourHourRangeBot:
                     )
 
                 elif entry_signal == "LONG" and self.current_position.symbol == "EUR":
-                    # Buy ETH with EUR - but check watermark first!
-                    eth_would_get = (self.current_position.quantity * (1 - self.config.fee_rate)) / ask
-                    eth_needed = self.watermark.must_beat(self.config.min_improvement_base)
-
-                    if eth_would_get >= eth_needed:
-                        print(f"   ✅ Watermark check: {eth_would_get:.6f} ETH >= {eth_needed:.6f} ETH required")
-                        self.execute_trade("EUR", "ETH", "4H Range - LONG Signal")
-                        self.active_trade = ActiveTrade(
-                            direction="LONG",
-                            entry_price=current_price,
-                            entry_asset="ETH",
-                            entry_quantity=self.current_position.quantity,
-                            stop_loss=stop_loss,
-                            take_profit=take_profit,
-                            entry_time=datetime.now()
-                        )
-                    else:
-                        print(f"   ❌ Watermark check FAILED: {eth_would_get:.6f} ETH < {eth_needed:.6f} ETH required")
-                        print(f"   ⏸️ Skipping trade - doesn't meet ladder strategy")
+                    # Buy ETH with EUR
+                    self.execute_trade("EUR", "ETH", "4H Range - LONG Signal")
+                    self.active_trade = ActiveTrade(
+                        direction="LONG",
+                        entry_price=current_price,
+                        entry_asset="ETH",
+                        entry_quantity=self.current_position.quantity,
+                        stop_loss=stop_loss,
+                        take_profit=take_profit,
+                        entry_time=datetime.now()
+                    )
 
         # Log performance
         self.cursor.execute("""
