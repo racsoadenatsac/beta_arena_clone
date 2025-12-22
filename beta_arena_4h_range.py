@@ -302,44 +302,48 @@ class FourHourRangeBot:
             print(f"   ⚠️ No 4-hour data available")
             return
 
-        # Find the first 4-hour candle that formed today (NY time)
-        for candle in reversed(ohlc_data):  # Start from most recent
+        # Find ALL candles from today, then get the FIRST one (earliest)
+        today_candles = []
+        for candle in ohlc_data:
             candle_time = datetime.fromtimestamp(candle[0], tz=ny_tz)
             candle_date = candle_time.strftime('%Y-%m-%d')
 
             if candle_date == today_ny:
-                # This is a candle from today
-                candle_open_time = candle_time
-                candle_close_time = candle_open_time + timedelta(hours=4)
+                today_candles.append((candle, candle_time))
 
-                # Check if candle is closed
-                if now_ny < candle_close_time:
-                    print(f"   ⏳ First 4h candle still forming (closes at {candle_close_time.strftime('%H:%M')} NY)")
-                    return
+        if not today_candles:
+            print(f"   ⚠️ No 4-hour candles found for today")
+            return
 
-                # Candle is closed, use it for range
-                range_high = float(candle[2])  # High
-                range_low = float(candle[3])   # Low
+        # Get the FIRST candle of the day (earliest time)
+        first_candle, candle_open_time = min(today_candles, key=lambda x: x[1])
+        candle_close_time = candle_open_time + timedelta(hours=4)
 
-                self.four_hour_range = FourHourRange(
-                    date=today_ny,
-                    range_high=range_high,
-                    range_low=range_low,
-                    candle_open_time=candle_open_time,
-                    candle_close_time=candle_close_time
-                )
+        # Check if candle is closed
+        if now_ny < candle_close_time:
+            print(f"   ⏳ First 4h candle still forming (closes at {candle_close_time.strftime('%H:%M')} NY)")
+            return
 
-                print(f"   ✅ 4-Hour Range Set:")
-                print(f"      High: €{range_high:,.2f}")
-                print(f"      Low: €{range_low:,.2f}")
-                print(f"      Range: €{range_high - range_low:,.2f}")
-                print(f"      Candle: {candle_open_time.strftime('%H:%M')} - {candle_close_time.strftime('%H:%M')} NY")
+        # Candle is closed, use it for range
+        range_high = float(first_candle[2])  # High
+        range_low = float(first_candle[3])   # Low
 
-                # Reset breakout state for new range
-                self.breakout_state.reset()
-                return
+        self.four_hour_range = FourHourRange(
+            date=today_ny,
+            range_high=range_high,
+            range_low=range_low,
+            candle_open_time=candle_open_time,
+            candle_close_time=candle_close_time
+        )
 
-        print(f"   ⚠️ No closed 4-hour candle found for today")
+        print(f"   ✅ 4-Hour Range Set:")
+        print(f"      High: €{range_high:,.2f}")
+        print(f"      Low: €{range_low:,.2f}")
+        print(f"      Range: €{range_high - range_low:,.2f}")
+        print(f"      Candle: {candle_open_time.strftime('%H:%M')} - {candle_close_time.strftime('%H:%M')} NY")
+
+        # Reset breakout state for new range
+        self.breakout_state.reset()
 
     def check_breakout_and_reentry(self, current_price: float) -> Optional[str]:
         """
