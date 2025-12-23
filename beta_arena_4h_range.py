@@ -827,6 +827,12 @@ class FourHourRangeBot:
                             take_profit=take_profit,
                             entry_time=datetime.now()
                         )
+                    else:
+                        # Wrong position for the signal
+                        required_pos = "EUR" if entry_signal == "LONG" else "ETH"
+                        log(f"\n   ⚠️ Cannot execute {entry_signal} signal - requires {required_pos} position")
+                        log(f"   Current position: {self.current_position.symbol}")
+                        log(f"   Trade skipped")
 
         # Log performance
         self.cursor.execute("""
