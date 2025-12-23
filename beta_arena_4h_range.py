@@ -745,6 +745,29 @@ class FourHourRangeBot:
         log(f"   Low: €{self.four_hour_range.range_low:,.2f}")
         log(f"   Current: €{current_price:,.2f}")
 
+        # Show target price if we have one
+        if self.active_trade:
+            # Active trade - show TP
+            log(f"   Target: €{self.active_trade.take_profit:,.2f}")
+        elif self.breakout_state.awaiting_reentry:
+            # Breakout occurred, awaiting re-entry - calculate expected TP
+            if self.breakout_state.entry_signal == "SHORT":
+                expected_sl = self.breakout_state.breakout_high
+                sl_distance = expected_sl - self.four_hour_range.range_high
+            else:  # LONG
+                expected_sl = self.breakout_state.breakout_low
+                sl_distance = self.four_hour_range.range_low - expected_sl
+
+            target_profit = self.config.take_profit_multiplier * sl_distance
+            adjusted_profit = target_profit / (1 - self.config.fee_rate)
+
+            if self.breakout_state.entry_signal == "SHORT":
+                expected_tp = self.four_hour_range.range_high - adjusted_profit
+            else:  # LONG
+                expected_tp = self.four_hour_range.range_low + adjusted_profit
+
+            log(f"   Target: €{expected_tp:,.2f}")
+
         # Check if we have an active trade with SL/TP
         if self.active_trade:
             log(f"\n🎯 ACTIVE TRADE ({self.active_trade.direction}):")
