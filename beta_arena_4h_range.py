@@ -35,6 +35,37 @@ import select
 import termios
 import tty
 import subprocess
+import logging
+
+# ==============================================================================
+# LOGGING SETUP
+# ==============================================================================
+
+# Create log filename with timestamp
+log_filename = f"trades-{datetime.now().strftime('%Y-%m-%d-%H-%M-%S')}.log"
+
+# Configure logging to both file and console
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S',
+    handlers=[
+        logging.FileHandler(log_filename),
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+
+logger = logging.getLogger(__name__)
+
+def log(message: str):
+    """Log message to both file and console"""
+    logger.info(message)
+
+# Log startup message
+log(f"{'='*70}")
+log(f"4-HOUR RANGE SCALPING BOT - LOG FILE CREATED")
+log(f"Log file: {log_filename}")
+log(f"{'='*70}")
 
 # ==============================================================================
 # CONFIGURATION
@@ -240,7 +271,7 @@ def get_user_input_with_timeout(prompt: str, timeout: float = 25.0) -> Optional[
 
     except Exception as e:
         # Fallback: if anything fails, just return None
-        print(f"\n⚠️ Input error: {e}")
+        log(f"\n⚠️ Input error: {e}")
         return None
 
 # ==============================================================================
@@ -307,9 +338,9 @@ class FourHourRangeBot:
 
     def initialize(self):
         """Initialize bot with starting position"""
-        print(f"\n{'='*70}")
-        print(f"4-HOUR RANGE SCALPING BOT - INITIALIZING")
-        print(f"{'='*70}\n")
+        log(f"\n{'='*70}")
+        log(f"4-HOUR RANGE SCALPING BOT - INITIALIZING")
+        log(f"{'='*70}\n")
 
         # Get current ETH price
         _, _, eth_price = self.kraken.get_current_price("ETHEUR")
@@ -327,11 +358,11 @@ class FourHourRangeBot:
         # Set initial value
         self.initial_value = self.config.initial_eth * eth_price
 
-        print(f"🚀 Bot Initialized")
-        print(f"   Starting: {self.config.initial_eth} ETH @ €{eth_price:,.2f}")
-        print(f"   Portfolio: €{self.initial_value:,.2f}")
-        print(f"   ETH Watermark: {self.watermark.get():.6f} ETH")
-        print(f"   Strategy: 4-Hour Range Scalping + ETH Ladder\n")
+        log(f"🚀 Bot Initialized")
+        log(f"   Starting: {self.config.initial_eth} ETH @ €{eth_price:,.2f}")
+        log(f"   Portfolio: €{self.initial_value:,.2f}")
+        log(f"   ETH Watermark: {self.watermark.get():.6f} ETH")
+        log(f"   Strategy: 4-Hour Range Scalping + ETH Ladder\n")
 
     def update_four_hour_range(self):
         """Update the 4-hour range for the current day"""
@@ -341,9 +372,9 @@ class FourHourRangeBot:
 
         # Check if we have an old range from a previous day
         if self.four_hour_range and not self.four_hour_range.is_active():
-            print(f"\n📅 NEW TRADING DAY: {today_ny}")
-            print(f"   Previous range from: {self.four_hour_range.date}")
-            print(f"   Resetting for new day...")
+            log(f"\n📅 NEW TRADING DAY: {today_ny}")
+            log(f"   Previous range from: {self.four_hour_range.date}")
+            log(f"   Resetting for new day...")
 
             # Clear old range and state
             self.four_hour_range = None
@@ -351,20 +382,20 @@ class FourHourRangeBot:
 
             # Clear any active trades from previous day
             if self.active_trade:
-                print(f"   ⚠️ Clearing active trade from previous day")
+                log(f"   ⚠️ Clearing active trade from previous day")
                 self.active_trade = None
 
         # Check if we already have a valid range for today
         if self.four_hour_range and self.four_hour_range.is_active():
             return  # Range already set for today
 
-        print(f"\n📊 Fetching 4-hour range for {today_ny} (NY time)...")
+        log(f"\n📊 Fetching 4-hour range for {today_ny} (NY time)...")
 
         # Get 4-hour OHLC data
         ohlc_data = self.kraken.get_ohlc("ETHEUR", interval=240)  # 240 minutes = 4 hours
 
         if not ohlc_data:
-            print(f"   ⚠️ No 4-hour data available")
+            log(f"   ⚠️ No 4-hour data available")
             return
 
         # Find ALL candles from today, then get the FIRST one (earliest)
@@ -377,7 +408,7 @@ class FourHourRangeBot:
                 today_candles.append((candle, candle_time))
 
         if not today_candles:
-            print(f"   ⚠️ No 4-hour candles found for today")
+            log(f"   ⚠️ No 4-hour candles found for today")
             return
 
         # Get the FIRST candle of the day (earliest time)
@@ -386,7 +417,7 @@ class FourHourRangeBot:
 
         # Check if candle is closed
         if now_ny < candle_close_time:
-            print(f"   ⏳ First 4h candle still forming (closes at {candle_close_time.strftime('%H:%M')} NY)")
+            log(f"   ⏳ First 4h candle still forming (closes at {candle_close_time.strftime('%H:%M')} NY)")
             return
 
         # Candle is closed, use it for range
@@ -401,11 +432,11 @@ class FourHourRangeBot:
             candle_close_time=candle_close_time
         )
 
-        print(f"   ✅ 4-Hour Range Set:")
-        print(f"      High: €{range_high:,.2f}")
-        print(f"      Low: €{range_low:,.2f}")
-        print(f"      Range: €{range_high - range_low:,.2f}")
-        print(f"      Candle: {candle_open_time.strftime('%H:%M')} - {candle_close_time.strftime('%H:%M')} NY")
+        log(f"   ✅ 4-Hour Range Set:")
+        log(f"      High: €{range_high:,.2f}")
+        log(f"      Low: €{range_low:,.2f}")
+        log(f"      Range: €{range_high - range_low:,.2f}")
+        log(f"      Candle: {candle_open_time.strftime('%H:%M')} - {candle_close_time.strftime('%H:%M')} NY")
 
         # Reset breakout state for new range
         self.breakout_state.reset()
@@ -434,7 +465,7 @@ class FourHourRangeBot:
 
             if candle_close > self.four_hour_range.range_high:
                 # Broke above range high
-                print(f"\n   🔺 BREAKOUT ABOVE: €{candle_close:,.2f} > €{self.four_hour_range.range_high:,.2f}")
+                log(f"\n   🔺 BREAKOUT ABOVE: €{candle_close:,.2f} > €{self.four_hour_range.range_high:,.2f}")
                 self.breakout_state.broke_above = True
                 self.breakout_state.breakout_high = candle_high
                 self.breakout_state.awaiting_reentry = True
@@ -446,7 +477,7 @@ class FourHourRangeBot:
 
             elif candle_close < self.four_hour_range.range_low:
                 # Broke below range low
-                print(f"\n   🔻 BREAKOUT BELOW: €{candle_close:,.2f} < €{self.four_hour_range.range_low:,.2f}")
+                log(f"\n   🔻 BREAKOUT BELOW: €{candle_close:,.2f} < €{self.four_hour_range.range_low:,.2f}")
                 self.breakout_state.broke_below = True
                 self.breakout_state.breakout_low = candle_low
                 self.breakout_state.awaiting_reentry = True
@@ -462,7 +493,7 @@ class FourHourRangeBot:
 
             if self.four_hour_range.contains(candle_close):
                 # Re-entered the range!
-                print(f"\n   ↩️ RE-ENTRY: €{candle_close:,.2f} back inside range")
+                log(f"\n   ↩️ RE-ENTRY: €{candle_close:,.2f} back inside range")
                 entry_signal = self.breakout_state.entry_signal
 
                 # Send iMessage alert
@@ -506,7 +537,7 @@ class FourHourRangeBot:
             '''
             subprocess.run(["osascript", "-e", applescript], check=True, capture_output=True)
         except Exception as e:
-            print(f"⚠️ iMessage failed: {e}")
+            log(f"⚠️ iMessage failed: {e}")
 
     def run(self):
         """Main loop"""
@@ -517,11 +548,11 @@ class FourHourRangeBot:
                 self.run_iteration()
                 time.sleep(self.config.loop_interval_seconds)
             except KeyboardInterrupt:
-                print("\n\n👋 Shutting down...")
+                log("\n\n👋 Shutting down...")
                 self.conn.close()
                 break
             except Exception as e:
-                print(f"\n❌ Error: {e}")
+                log(f"\n❌ Error: {e}")
                 import traceback
                 traceback.print_exc()
                 time.sleep(self.config.loop_interval_seconds)
@@ -532,7 +563,7 @@ class FourHourRangeBot:
         self.update_four_hour_range()
 
         if not self.four_hour_range:
-            print(f"⏳ Waiting for 4-hour range to be established...")
+            log(f"⏳ Waiting for 4-hour range to be established...")
             return
 
         # Get current price
@@ -546,57 +577,57 @@ class FourHourRangeBot:
 
         profit_pct = ((portfolio_value - self.initial_value) / self.initial_value) * 100
 
-        print(f"\n{'='*70}")
-        print(f"4H-RANGE BOT - {datetime.now().strftime('%H:%M:%S')}")
-        print(f"{'='*70}")
-        print(f"\n💰 PERFORMANCE:")
-        print(f"   Portfolio: €{portfolio_value:,.2f}")
-        print(f"   Profit: €{portfolio_value - self.initial_value:+,.2f} ({profit_pct:+.2f}%)")
+        log(f"\n{'='*70}")
+        log(f"4H-RANGE BOT - {datetime.now().strftime('%H:%M:%S')}")
+        log(f"{'='*70}")
+        log(f"\n💰 PERFORMANCE:")
+        log(f"   Portfolio: €{portfolio_value:,.2f}")
+        log(f"   Profit: €{portfolio_value - self.initial_value:+,.2f} ({profit_pct:+.2f}%)")
 
-        print(f"\n📍 POSITION: {self.current_position.symbol}")
+        log(f"\n📍 POSITION: {self.current_position.symbol}")
         if self.current_position.symbol == "ETH":
-            print(f"   {self.current_position.quantity:.6f} ETH @ €{current_price:,.2f}")
+            log(f"   {self.current_position.quantity:.6f} ETH @ €{current_price:,.2f}")
         else:
-            print(f"   €{self.current_position.quantity:,.2f}")
+            log(f"   €{self.current_position.quantity:,.2f}")
 
-        print(f"\n🏔️ WATERMARK:")
-        print(f"   ETH: {self.watermark.get():.6f} ETH (tracking only)")
+        log(f"\n🏔️ WATERMARK:")
+        log(f"   ETH: {self.watermark.get():.6f} ETH (tracking only)")
 
-        print(f"\n📊 4-HOUR RANGE ({self.four_hour_range.date}):")
-        print(f"   High: €{self.four_hour_range.range_high:,.2f}")
-        print(f"   Low: €{self.four_hour_range.range_low:,.2f}")
-        print(f"   Current: €{current_price:,.2f}")
+        log(f"\n📊 4-HOUR RANGE ({self.four_hour_range.date}):")
+        log(f"   High: €{self.four_hour_range.range_high:,.2f}")
+        log(f"   Low: €{self.four_hour_range.range_low:,.2f}")
+        log(f"   Current: €{current_price:,.2f}")
 
         # Check if we have an active trade with SL/TP
         if self.active_trade:
-            print(f"\n🎯 ACTIVE TRADE ({self.active_trade.direction}):")
-            print(f"   Entry: €{self.active_trade.entry_price:,.2f}")
-            print(f"   Stop Loss: €{self.active_trade.stop_loss:,.2f}")
-            print(f"   Take Profit: €{self.active_trade.take_profit:,.2f}")
+            log(f"\n🎯 ACTIVE TRADE ({self.active_trade.direction}):")
+            log(f"   Entry: €{self.active_trade.entry_price:,.2f}")
+            log(f"   Stop Loss: €{self.active_trade.stop_loss:,.2f}")
+            log(f"   Take Profit: €{self.active_trade.take_profit:,.2f}")
 
             # Check if SL or TP hit
             if self.active_trade.direction == "LONG":
                 if current_price <= self.active_trade.stop_loss:
-                    print(f"\n   🛑 STOP LOSS HIT!")
+                    log(f"\n   🛑 STOP LOSS HIT!")
                     # Execute exit trade
                     self.execute_exit_trade("Stop Loss Hit")
                     self.active_trade = None
                     return
                 elif current_price >= self.active_trade.take_profit:
-                    print(f"\n   ✅ TAKE PROFIT HIT!")
+                    log(f"\n   ✅ TAKE PROFIT HIT!")
                     # Execute exit trade
                     self.execute_exit_trade("Take Profit Hit")
                     self.active_trade = None
                     return
             else:  # SHORT
                 if current_price >= self.active_trade.stop_loss:
-                    print(f"\n   🛑 STOP LOSS HIT!")
+                    log(f"\n   🛑 STOP LOSS HIT!")
                     # Execute exit trade
                     self.execute_exit_trade("Stop Loss Hit")
                     self.active_trade = None
                     return
                 elif current_price <= self.active_trade.take_profit:
-                    print(f"\n   ✅ TAKE PROFIT HIT!")
+                    log(f"\n   ✅ TAKE PROFIT HIT!")
                     # Execute exit trade
                     self.execute_exit_trade("Take Profit Hit")
                     self.active_trade = None
@@ -607,14 +638,14 @@ class FourHourRangeBot:
             entry_signal = self.check_breakout_and_reentry(current_price)
 
             if entry_signal:
-                print(f"\n🎯 ENTRY SIGNAL: {entry_signal}")
+                log(f"\n🎯 ENTRY SIGNAL: {entry_signal}")
 
                 # Calculate SL and TP
                 stop_loss, take_profit = self.calculate_stop_loss_and_take_profit(entry_signal, current_price)
 
-                print(f"   Entry: €{current_price:,.2f}")
-                print(f"   Stop Loss: €{stop_loss:,.2f}")
-                print(f"   Take Profit: €{take_profit:,.2f}")
+                log(f"   Entry: €{current_price:,.2f}")
+                log(f"   Stop Loss: €{stop_loss:,.2f}")
+                log(f"   Take Profit: €{take_profit:,.2f}")
 
                 # Ask user if they want to trade (25-second timeout)
                 signal_type = "Sell to EUR" if entry_signal == "SHORT" else "Buy ETH"
@@ -628,25 +659,25 @@ class FourHourRangeBot:
                     # User explicitly approved
                     should_execute = True
                     execution_reason = "User Override"
-                    print(f"\n   👤 USER APPROVED: Executing trade")
+                    log(f"\n   👤 USER APPROVED: Executing trade")
                 elif user_response is None:
                     # Timeout - check if conditions are met
-                    print(f"\n   ⏰ TIMEOUT: Checking conditions for automatic execution...")
+                    log(f"\n   ⏰ TIMEOUT: Checking conditions for automatic execution...")
 
                     # Check if we're in correct position for the signal
                     if entry_signal == "SHORT" and self.current_position.symbol == "ETH":
                         should_execute = True
                         execution_reason = "Auto (Timeout)"
-                        print(f"   ✅ Conditions met - executing automatically")
+                        log(f"   ✅ Conditions met - executing automatically")
                     elif entry_signal == "LONG" and self.current_position.symbol == "EUR":
                         should_execute = True
                         execution_reason = "Auto (Timeout)"
-                        print(f"   ✅ Conditions met - executing automatically")
+                        log(f"   ✅ Conditions met - executing automatically")
                     else:
-                        print(f"   ⏸️ Conditions not met - skipping trade")
+                        log(f"   ⏸️ Conditions not met - skipping trade")
                 else:
                     # User declined or gave invalid input
-                    print(f"\n   ⏸️ USER DECLINED: Skipping trade")
+                    log(f"\n   ⏸️ USER DECLINED: Skipping trade")
 
                 # Reset breakout state
                 self.breakout_state.reset()
@@ -689,7 +720,7 @@ class FourHourRangeBot:
 
     def execute_trade(self, from_asset: str, to_asset: str, reason: str):
         """Execute a trade"""
-        print(f"\n🔄 EXECUTING TRADE: {from_asset} → {to_asset}")
+        log(f"\n🔄 EXECUTING TRADE: {from_asset} → {to_asset}")
 
         # Get current prices
         bid, ask, _ = self.kraken.get_current_price("ETHEUR")
@@ -723,16 +754,16 @@ class FourHourRangeBot:
         # Update watermark if bought ETH
         if to_asset == "ETH":
             if new_quantity > self.watermark.get():
-                print(f"   🏔️ NEW WATERMARK: {new_quantity:.6f} ETH (was {self.watermark.get():.6f})")
+                log(f"   🏔️ NEW WATERMARK: {new_quantity:.6f} ETH (was {self.watermark.get():.6f})")
                 self.watermark.set(new_quantity)
 
         # Update stats
         self.total_trades += 1
         self.total_fees += fee
 
-        print(f"   Value: €{value:,.2f} | Fee: €{fee:.2f}")
-        print(f"   New Position: {new_quantity:.6f} {to_asset}")
-        print(f"   Reason: {reason}")
+        log(f"   Value: €{value:,.2f} | Fee: €{fee:.2f}")
+        log(f"   New Position: {new_quantity:.6f} {to_asset}")
+        log(f"   Reason: {reason}")
 
         # Log trade
         self.cursor.execute("""
