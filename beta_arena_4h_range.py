@@ -762,11 +762,14 @@ class FourHourRangeBot:
             # Calculate profit before fees
             if self.active_trade.direction == "SHORT":
                 # Sold ETH to EUR, profit from price drop
-                profit_bf_eur = self.current_position.quantity * target_move_raw
+                # Use the ETH quantity that was sold (entry_quantity)
+                profit_bf_eur = self.active_trade.entry_quantity * target_move_raw
                 target_price_bf = self.active_trade.entry_price - target_move_raw
             else:  # LONG
-                # Bought ETH, profit from price rise
-                profit_bf_eur = self.current_position.quantity * target_move_raw
+                # Bought ETH with EUR, profit from price rise
+                # Calculate ETH bought from EUR spent
+                eth_bought = self.active_trade.entry_quantity / self.active_trade.entry_price
+                profit_bf_eur = eth_bought * target_move_raw
                 target_price_bf = self.active_trade.entry_price + target_move_raw
 
             # Profit after entry fee
