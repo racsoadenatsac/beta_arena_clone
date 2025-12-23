@@ -543,11 +543,12 @@ class FourHourRangeBot:
                 )
 
                 # Only show target if profitable after entry fee
+                log(f"      Stop Loss: €{candle_high:,.2f}")
                 if profit_calc['profit_pct'] > 0:
                     if 'profit_eur' in profit_calc:
-                        log(f"      Profit target: €{profit_calc['tp_price']:,.2f} (+{profit_calc['profit_pct']:.2f}% after entry fee) = €{profit_calc['profit_eur']:,.2f} profit")
+                        log(f"      Take Profit: €{profit_calc['tp_price']:,.2f} (+{profit_calc['profit_pct']:.2f}% after entry fee) = €{profit_calc['profit_eur']:,.2f} profit")
                     else:
-                        log(f"      Profit target: €{profit_calc['tp_price']:,.2f} (+{profit_calc['profit_pct']:.2f}% after entry fee)")
+                        log(f"      Take Profit: €{profit_calc['tp_price']:,.2f} (+{profit_calc['profit_pct']:.2f}% after entry fee)")
                 else:
                     log(f"      ⚠️ No profitable target (entry fee exceeds potential profit)")
 
@@ -563,7 +564,8 @@ class FourHourRangeBot:
                     profit_text = f"+{profit_calc['profit_pct']:.2f}%"
                     if 'profit_eur' in profit_calc:
                         profit_text += f" (€{profit_calc['profit_eur']:,.2f})"
-                    message += f"\nProfit target: €{profit_calc['tp_price']:,.2f} ({profit_text})"
+                    message += f"\nStop Loss: €{candle_high:,.2f}"
+                    message += f"\nTake Profit: €{profit_calc['tp_price']:,.2f} ({profit_text})"
                 else:
                     message += f"\n⚠️ No profitable target after entry fee"
 
@@ -586,11 +588,12 @@ class FourHourRangeBot:
                 )
 
                 # Only show target if profitable after entry fee
+                log(f"      Stop Loss: €{candle_low:,.2f}")
                 if profit_calc['profit_pct'] > 0:
                     if 'profit_eur' in profit_calc:
-                        log(f"      Profit target: €{profit_calc['tp_price']:,.2f} (+{profit_calc['profit_pct']:.2f}% after entry fee) = €{profit_calc['profit_eur']:,.2f} profit")
+                        log(f"      Take Profit: €{profit_calc['tp_price']:,.2f} (+{profit_calc['profit_pct']:.2f}% after entry fee) = €{profit_calc['profit_eur']:,.2f} profit")
                     else:
-                        log(f"      Profit target: €{profit_calc['tp_price']:,.2f} (+{profit_calc['profit_pct']:.2f}% after entry fee)")
+                        log(f"      Take Profit: €{profit_calc['tp_price']:,.2f} (+{profit_calc['profit_pct']:.2f}% after entry fee)")
                 else:
                     log(f"      ⚠️ No profitable target (entry fee exceeds potential profit)")
 
@@ -606,7 +609,8 @@ class FourHourRangeBot:
                     profit_text = f"+{profit_calc['profit_pct']:.2f}%"
                     if 'profit_eur' in profit_calc:
                         profit_text += f" (€{profit_calc['profit_eur']:,.2f})"
-                    message += f"\nProfit target: €{profit_calc['tp_price']:,.2f} ({profit_text})"
+                    message += f"\nStop Loss: €{candle_low:,.2f}"
+                    message += f"\nTake Profit: €{profit_calc['tp_price']:,.2f} ({profit_text})"
                 else:
                     message += f"\n⚠️ No profitable target after entry fee"
 
@@ -622,9 +626,26 @@ class FourHourRangeBot:
                 log(f"\n   ↩️ RE-ENTRY: €{candle_close:,.2f} back inside range")
                 entry_signal = self.breakout_state.entry_signal
 
-                # Send iMessage alert
+                # Calculate expected SL and TP for the re-entry
+                if entry_signal == "SHORT":
+                    expected_sl = self.breakout_state.breakout_high
+                    sl_distance = expected_sl - candle_close
+                else:  # LONG
+                    expected_sl = self.breakout_state.breakout_low
+                    sl_distance = candle_close - expected_sl
+
+                # Calculate TP with fee adjustment
+                target_profit = self.config.take_profit_multiplier * sl_distance
+                adjusted_profit = target_profit / (1 - self.config.fee_rate)
+
+                if entry_signal == "SHORT":
+                    expected_tp = candle_close - adjusted_profit
+                else:  # LONG
+                    expected_tp = candle_close + adjusted_profit
+
+                # Send iMessage alert with TP
                 signal_desc = "LONG (Buy ETH)" if entry_signal == "LONG" else "SHORT (Sell to EUR)"
-                message = f"↩️ RE-ENTRY DETECTED\n€{candle_close:,.2f} back inside range\nSignal: {signal_desc}\nAwaiting your decision..."
+                message = f"↩️ RE-ENTRY DETECTED\n€{candle_close:,.2f} back inside range\nSignal: {signal_desc}\nStop Loss: €{expected_sl:,.2f}\nTake Profit: €{expected_tp:,.2f}\nAwaiting your decision..."
                 self.send_imessage(message)
 
                 # Don't reset state yet - will reset after trade decision
