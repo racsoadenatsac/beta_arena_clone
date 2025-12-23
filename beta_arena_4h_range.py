@@ -289,6 +289,21 @@ class FourHourRangeBot:
         now_ny = datetime.now(ny_tz)
         today_ny = now_ny.strftime('%Y-%m-%d')
 
+        # Check if we have an old range from a previous day
+        if self.four_hour_range and not self.four_hour_range.is_active():
+            print(f"\n📅 NEW TRADING DAY: {today_ny}")
+            print(f"   Previous range from: {self.four_hour_range.date}")
+            print(f"   Resetting for new day...")
+
+            # Clear old range and state
+            self.four_hour_range = None
+            self.breakout_state.reset()
+
+            # Clear any active trades from previous day
+            if self.active_trade:
+                print(f"   ⚠️ Clearing active trade from previous day")
+                self.active_trade = None
+
         # Check if we already have a valid range for today
         if self.four_hour_range and self.four_hour_range.is_active():
             return  # Range already set for today
