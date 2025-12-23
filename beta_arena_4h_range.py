@@ -1000,6 +1000,55 @@ class FourHourRangeBot:
                 # Reset breakout state
                 self.breakout_state.reset()
 
+                # Check watermark before executing (ladder strategy)
+                if should_execute:
+                    # Get current bid/ask for accurate calculation
+                    bid, ask, _ = self.kraken.get_current_price("ETHEUR")
+
+                    # Calculate expected final ETH after complete trade cycle
+                    if entry_signal == "SHORT":
+                        # SHORT: Sell ETH (bid) → Buy back at TP (ask)
+                        eth_amount = self.current_position.quantity
+                        eur_after_sell = eth_amount * bid * (1 - self.config.fee_rate)
+
+                        # Estimate ask price at TP (add current spread to TP)
+                        estimated_ask_at_tp = take_profit + (ask - bid)
+                        expected_final_eth = (eur_after_sell * (1 - self.config.fee_rate)) / estimated_ask_at_tp
+
+                    else:  # LONG
+                        # LONG: Buy ETH (ask) → Sell at TP (bid) → Buy back to ETH (ask)
+                        eur_amount = self.current_position.quantity
+                        eth_after_buy = (eur_amount * (1 - self.config.fee_rate)) / ask
+
+                        # Sell at TP (use bid)
+                        estimated_bid_at_tp = take_profit - (ask - bid)
+                        eur_after_sell = eth_after_buy * estimated_bid_at_tp * (1 - self.config.fee_rate)
+
+                        # Buy back to ETH to complete cycle
+                        expected_final_eth = (eur_after_sell * (1 - self.config.fee_rate)) / ask
+
+                    # Check if trade beats watermark
+                    improvement_pct = ((expected_final_eth / self.watermark.get()) - 1) * 100
+
+                    if expected_final_eth <= self.watermark.get():
+                        log(f"\n   ⚠️ WATERMARK CHECK FAILED - Trade skipped")
+                        log(f"   Expected final ETH: {expected_final_eth:.6f}")
+                        log(f"   Current watermark: {self.watermark.get():.6f}")
+                        log(f"   Improvement: {improvement_pct:+.3f}%")
+                        log(f"   ETH Ladder: Trade would result in loss - SKIPPED")
+
+                        # Send iMessage notification
+                        signal_desc = "SHORT" if entry_signal == "SHORT" else "LONG"
+                        message = f"⚠️ TRADE SKIPPED - {signal_desc}\nWatermark: {self.watermark.get():.6f} ETH\nExpected: {expected_final_eth:.6f} ETH\nImprovement: {improvement_pct:+.3f}%\nETH Ladder protection active"
+                        self.send_imessage(message)
+
+                        should_execute = False
+                    else:
+                        log(f"\n   ✅ WATERMARK CHECK PASSED")
+                        log(f"   Expected final ETH: {expected_final_eth:.6f}")
+                        log(f"   Current watermark: {self.watermark.get():.6f}")
+                        log(f"   Improvement: {improvement_pct:+.3f}%")
+
                 # Execute trade if approved
                 if should_execute:
                     if entry_signal == "SHORT" and self.current_position.symbol == "ETH":
