@@ -770,9 +770,13 @@ class FourHourRangeBot:
             # Profit in EUR after entry fee
             profit_af_eur = profit_bf_eur - fee_eur
 
+            # Convert to ETH at current price
+            eth_bf = profit_bf_eur / current_price
+            eth_af = profit_af_eur / current_price
+
             log(f"   Fees: €{fee_eur:,.2f}")
-            log(f"   Target BF: €{profit_bf_eur:,.2f}")
-            log(f"   Target AF: €{profit_af_eur:,.2f}")
+            log(f"   Target BF: €{profit_bf_eur:,.2f} (ETH {eth_bf:.6f})")
+            log(f"   Target AF: €{profit_af_eur:,.2f} (ETH {eth_af:.6f})")
 
         elif self.breakout_state.awaiting_reentry:
             # Breakout occurred, awaiting re-entry - calculate expected profits
@@ -809,9 +813,13 @@ class FourHourRangeBot:
             # Profit in EUR after entry fee
             profit_af_eur = profit_bf_eur - fee_eur
 
+            # Convert to ETH at current price
+            eth_bf = profit_bf_eur / current_price
+            eth_af = profit_af_eur / current_price
+
             log(f"   Fees: €{fee_eur:,.2f}")
-            log(f"   Target BF: €{profit_bf_eur:,.2f}")
-            log(f"   Target AF: €{profit_af_eur:,.2f}")
+            log(f"   Target BF: €{profit_bf_eur:,.2f} (ETH {eth_bf:.6f})")
+            log(f"   Target AF: €{profit_af_eur:,.2f} (ETH {eth_af:.6f})")
 
         # Check if we have an active trade with SL/TP
         if self.active_trade:
