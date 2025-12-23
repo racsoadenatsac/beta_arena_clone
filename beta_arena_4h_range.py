@@ -755,26 +755,33 @@ class FourHourRangeBot:
 
             fee_eur = entry_value_eur * self.config.fee_rate
 
-            # Calculate target prices (where to exit)
+            # Calculate profit amounts in EUR
             sl_distance = abs(self.active_trade.stop_loss - self.active_trade.entry_price)
             target_move_raw = self.config.take_profit_multiplier * sl_distance
 
-            # Target price before fee adjustment (raw 2x SL)
+            # Calculate profit before fees
             if self.active_trade.direction == "SHORT":
+                # Sold ETH to EUR, profit from price drop
+                profit_bf_eur = self.current_position.quantity * target_move_raw
                 target_price_bf = self.active_trade.entry_price - target_move_raw
             else:  # LONG
+                # Bought ETH, profit from price rise
+                profit_bf_eur = self.current_position.quantity * target_move_raw
                 target_price_bf = self.active_trade.entry_price + target_move_raw
+
+            # Profit after entry fee
+            profit_af_eur = profit_bf_eur - fee_eur
 
             # Target price after fee adjustment (this is the actual TP)
             target_price_af = self.active_trade.take_profit
 
-            # Convert to ETH amounts at these target prices
-            eth_bf = 1.0 / target_price_bf if target_price_bf > 0 else 0
-            eth_af = 1.0 / target_price_af if target_price_af > 0 else 0
+            # Convert profit to ETH at current price
+            eth_bf_amount = profit_bf_eur / current_price
+            eth_af_amount = profit_af_eur / current_price
 
             log(f"   Fees: €{fee_eur:,.2f}")
-            log(f"   Target BF: €{target_price_bf:,.2f} (ETH {eth_bf:.6f})")
-            log(f"   Target AF: €{target_price_af:,.2f} (ETH {eth_af:.6f})")
+            log(f"   Target BF: €{profit_bf_eur:,.2f} (ETH {eth_bf_amount:.6f}) @ €{target_price_bf:,.2f}")
+            log(f"   Target AF: €{profit_af_eur:,.2f} (ETH {eth_af_amount:.6f}) @ €{target_price_af:,.2f})")
 
         elif self.breakout_state.awaiting_reentry:
             # Breakout occurred, awaiting re-entry - calculate expected target prices
@@ -795,14 +802,30 @@ class FourHourRangeBot:
 
             fee_eur = entry_value_eur * self.config.fee_rate
 
-            # Calculate target prices (where to exit)
+            # Calculate profit amounts in EUR
             target_move_raw = self.config.take_profit_multiplier * sl_distance
 
-            # Target price before fee adjustment (raw 2x SL)
+            # Calculate profit before fees
             if self.breakout_state.entry_signal == "SHORT":
+                # Selling ETH to EUR, profit from price drop
+                profit_bf_eur = self.current_position.quantity * target_move_raw
+                # ETH at target price before fee adjustment
                 target_price_bf = expected_entry - target_move_raw
+                eth_bf_amount = profit_bf_eur / current_price
             else:  # LONG
+                # Buying ETH with EUR, profit from price rise
+                # After entry fee, we have this much EUR to buy ETH
+                eur_after_fee = entry_value_eur * (1 - self.config.fee_rate)
+                # ETH we can buy
+                eth_bought = eur_after_fee / expected_entry
+                # Profit from price rise (in EUR terms)
+                profit_bf_eur = eth_bought * target_move_raw
+                # ETH at target price before fee adjustment
                 target_price_bf = expected_entry + target_move_raw
+                eth_bf_amount = profit_bf_eur / current_price
+
+            # Profit after entry fee
+            profit_af_eur = profit_bf_eur - fee_eur
 
             # Target price after fee adjustment
             adjusted_move = target_move_raw / (1 - self.config.fee_rate)
@@ -811,13 +834,11 @@ class FourHourRangeBot:
             else:  # LONG
                 target_price_af = expected_entry + adjusted_move
 
-            # Convert to ETH amounts at these target prices
-            eth_bf = 1.0 / target_price_bf if target_price_bf > 0 else 0
-            eth_af = 1.0 / target_price_af if target_price_af > 0 else 0
+            eth_af_amount = profit_af_eur / current_price
 
             log(f"   Fees: €{fee_eur:,.2f}")
-            log(f"   Target BF: €{target_price_bf:,.2f} (ETH {eth_bf:.6f})")
-            log(f"   Target AF: €{target_price_af:,.2f} (ETH {eth_af:.6f})")
+            log(f"   Target BF: €{profit_bf_eur:,.2f} (ETH {eth_bf_amount:.6f}) @ €{target_price_bf:,.2f}")
+            log(f"   Target AF: €{profit_af_eur:,.2f} (ETH {eth_af_amount:.6f}) @ €{target_price_af:,.2f})")
 
         # Check if we have an active trade with SL/TP
         if self.active_trade:
