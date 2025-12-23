@@ -466,25 +466,27 @@ class FourHourRangeBot:
             if candle_close > self.four_hour_range.range_high:
                 # Broke above range high
                 log(f"\n   🔺 BREAKOUT ABOVE: €{candle_close:,.2f} > €{self.four_hour_range.range_high:,.2f}")
+                log(f"      Re-entry target: Price closes back below €{self.four_hour_range.range_high:,.2f}")
                 self.breakout_state.broke_above = True
                 self.breakout_state.breakout_high = candle_high
                 self.breakout_state.awaiting_reentry = True
                 self.breakout_state.entry_signal = "SHORT"  # Will short on re-entry
 
                 # Send iMessage alert
-                message = f"🔺 BREAKOUT ABOVE\n€{candle_close:,.2f} > €{self.four_hour_range.range_high:,.2f}\nWaiting for re-entry..."
+                message = f"🔺 BREAKOUT ABOVE\n€{candle_close:,.2f} > €{self.four_hour_range.range_high:,.2f}\nRe-entry target: Below €{self.four_hour_range.range_high:,.2f}\nSignal: SHORT when re-entry occurs"
                 self.send_imessage(message)
 
             elif candle_close < self.four_hour_range.range_low:
                 # Broke below range low
                 log(f"\n   🔻 BREAKOUT BELOW: €{candle_close:,.2f} < €{self.four_hour_range.range_low:,.2f}")
+                log(f"      Re-entry target: Price closes back above €{self.four_hour_range.range_low:,.2f}")
                 self.breakout_state.broke_below = True
                 self.breakout_state.breakout_low = candle_low
                 self.breakout_state.awaiting_reentry = True
                 self.breakout_state.entry_signal = "LONG"  # Will long on re-entry
 
                 # Send iMessage alert
-                message = f"🔻 BREAKOUT BELOW\n€{candle_close:,.2f} < €{self.four_hour_range.range_low:,.2f}\nWaiting for re-entry..."
+                message = f"🔻 BREAKOUT BELOW\n€{candle_close:,.2f} < €{self.four_hour_range.range_low:,.2f}\nRe-entry target: Above €{self.four_hour_range.range_low:,.2f}\nSignal: LONG when re-entry occurs"
                 self.send_imessage(message)
 
         else:
