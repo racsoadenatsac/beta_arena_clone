@@ -460,16 +460,18 @@ class FourHourRangeBot:
         else:  # LONG
             sl_distance = entry_price - sl_price  # SL is below entry
 
-        # Calculate TP (2x SL distance in profitable direction)
+        # Calculate TP (2x SL distance + entry fee adjustment)
+        # TP is adjusted so that after paying entry fee, net profit = 2x SL distance
+        target_profit = self.config.take_profit_multiplier * sl_distance
+        adjusted_profit = target_profit / (1 - self.config.fee_rate)  # Adjust for entry fee
+
         if signal == "SHORT":
-            tp_price = entry_price - (self.config.take_profit_multiplier * sl_distance)
+            tp_price = entry_price - adjusted_profit
         else:  # LONG
-            tp_price = entry_price + (self.config.take_profit_multiplier * sl_distance)
+            tp_price = entry_price + adjusted_profit
 
-        # Calculate price movement percentage
+        # Calculate actual net profit percentage (after entry fee)
         price_movement_pct = abs(tp_price - entry_price) / entry_price * 100
-
-        # Subtract only entry fee (0.26%) - exit fee will be paid later
         entry_fee_pct = self.config.fee_rate * 100  # 0.26%
         net_profit_pct = price_movement_pct - entry_fee_pct
 
@@ -483,15 +485,21 @@ class FourHourRangeBot:
         # Calculate EUR profit if balance provided
         if current_balance is not None:
             if signal == "SHORT":
-                # Starting with ETH, ending with EUR at TP
+                # Starting with ETH, selling to EUR
+                # EUR received after entry fee
                 eur_after_entry = current_balance * entry_price * (1 - self.config.fee_rate)
-                eur_at_tp = eur_after_entry * (1 + (price_movement_pct / 100))
-                profit_eur = eur_at_tp - (current_balance * entry_price)  # Profit after entry fee only
+                # Value if we had held ETH until TP
+                value_if_held = current_balance * tp_price
+                # Profit = EUR we have - value if we held
+                profit_eur = eur_after_entry - value_if_held
             else:  # LONG
-                # Starting with EUR, buying ETH, value at TP
+                # Starting with EUR, buying ETH
+                # ETH received after entry fee
                 eth_after_entry = (current_balance / entry_price) * (1 - self.config.fee_rate)
+                # Value at TP
                 eur_value_at_tp = eth_after_entry * tp_price
-                profit_eur = eur_value_at_tp - current_balance  # Profit after entry fee only
+                # Profit = value at TP - EUR we started with
+                profit_eur = eur_value_at_tp - current_balance
 
             result['profit_eur'] = profit_eur
 
