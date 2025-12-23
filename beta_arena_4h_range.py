@@ -747,26 +747,58 @@ class FourHourRangeBot:
 
         # Show target price if we have one
         if self.active_trade:
-            # Active trade - show TP
-            log(f"   Target: €{self.active_trade.take_profit:,.2f}")
+            # Active trade - calculate fees and targets
+            entry_value = self.current_position.quantity if self.current_position.symbol == "EUR" else (self.current_position.quantity * self.active_trade.entry_price)
+            fee_eur = entry_value * self.config.fee_rate
+
+            # Calculate target before fees (raw 2x SL)
+            sl_distance = abs(self.active_trade.stop_loss - self.active_trade.entry_price)
+            target_profit_raw = self.config.take_profit_multiplier * sl_distance
+
+            if self.active_trade.direction == "SHORT":
+                target_bf = self.active_trade.entry_price - target_profit_raw
+            else:  # LONG
+                target_bf = self.active_trade.entry_price + target_profit_raw
+
+            log(f"   Fees: €{fee_eur:,.2f}")
+            log(f"   Target BF: €{target_bf:,.2f}")
+            log(f"   Target AF: €{self.active_trade.take_profit:,.2f}")
+
         elif self.breakout_state.awaiting_reentry:
             # Breakout occurred, awaiting re-entry - calculate expected TP
             if self.breakout_state.entry_signal == "SHORT":
+                expected_entry = self.four_hour_range.range_high
                 expected_sl = self.breakout_state.breakout_high
-                sl_distance = expected_sl - self.four_hour_range.range_high
+                sl_distance = expected_sl - expected_entry
             else:  # LONG
+                expected_entry = self.four_hour_range.range_low
                 expected_sl = self.breakout_state.breakout_low
-                sl_distance = self.four_hour_range.range_low - expected_sl
+                sl_distance = expected_entry - expected_sl
 
-            target_profit = self.config.take_profit_multiplier * sl_distance
-            adjusted_profit = target_profit / (1 - self.config.fee_rate)
+            # Calculate fees based on current position
+            if self.current_position.symbol == "EUR":
+                entry_value = self.current_position.quantity
+            else:
+                entry_value = self.current_position.quantity * expected_entry
+            fee_eur = entry_value * self.config.fee_rate
 
+            # Target before fees (raw 2x SL)
+            target_profit_raw = self.config.take_profit_multiplier * sl_distance
             if self.breakout_state.entry_signal == "SHORT":
-                expected_tp = self.four_hour_range.range_high - adjusted_profit
+                target_bf = expected_entry - target_profit_raw
             else:  # LONG
-                expected_tp = self.four_hour_range.range_low + adjusted_profit
+                target_bf = expected_entry + target_profit_raw
 
-            log(f"   Target: €{expected_tp:,.2f}")
+            # Target after fees (adjusted for entry fee)
+            adjusted_profit = target_profit_raw / (1 - self.config.fee_rate)
+            if self.breakout_state.entry_signal == "SHORT":
+                target_af = expected_entry - adjusted_profit
+            else:  # LONG
+                target_af = expected_entry + adjusted_profit
+
+            log(f"   Fees: €{fee_eur:,.2f}")
+            log(f"   Target BF: €{target_bf:,.2f}")
+            log(f"   Target AF: €{target_af:,.2f}")
 
         # Check if we have an active trade with SL/TP
         if self.active_trade:
