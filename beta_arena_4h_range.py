@@ -441,6 +441,64 @@ class FourHourRangeBot:
         # Reset breakout state for new range
         self.breakout_state.reset()
 
+    def calculate_expected_profit(self, entry_price: float, sl_price: float, signal: str, current_balance: float = None) -> dict:
+        """
+        Calculate expected profit for a trade including Kraken fees.
+
+        Args:
+            entry_price: Expected entry price
+            sl_price: Stop loss price
+            signal: "LONG" or "SHORT"
+            current_balance: Current balance (ETH for SHORT, EUR for LONG)
+
+        Returns:
+            dict with tp_price, profit_pct, profit_eur (if balance provided)
+        """
+        # Calculate SL distance
+        if signal == "SHORT":
+            sl_distance = sl_price - entry_price  # SL is above entry
+        else:  # LONG
+            sl_distance = entry_price - sl_price  # SL is below entry
+
+        # Calculate TP (2x SL distance in profitable direction)
+        if signal == "SHORT":
+            tp_price = entry_price - (self.config.take_profit_multiplier * sl_distance)
+        else:  # LONG
+            tp_price = entry_price + (self.config.take_profit_multiplier * sl_distance)
+
+        # Calculate price movement percentage
+        price_movement_pct = abs(tp_price - entry_price) / entry_price * 100
+
+        # Subtract fees (0.26% on entry + 0.26% on exit = 0.52% total)
+        total_fee_pct = self.config.fee_rate * 2 * 100  # 0.52%
+        net_profit_pct = price_movement_pct - total_fee_pct
+
+        result = {
+            'tp_price': tp_price,
+            'profit_pct': net_profit_pct,
+            'sl_price': sl_price,
+            'sl_distance': sl_distance
+        }
+
+        # Calculate EUR profit if balance provided
+        if current_balance is not None:
+            if signal == "SHORT":
+                # Starting with ETH, ending with EUR
+                eur_after_entry = current_balance * entry_price * (1 - self.config.fee_rate)
+                eur_after_tp = eur_after_entry * (1 + (price_movement_pct / 100))
+                final_eur = eur_after_tp * (1 - self.config.fee_rate)
+                profit_eur = final_eur - (current_balance * entry_price)  # Compare to no-trade scenario
+            else:  # LONG
+                # Starting with EUR, ending with ETH
+                eth_after_entry = (current_balance / entry_price) * (1 - self.config.fee_rate)
+                eth_after_tp = eth_after_entry  # Same ETH amount
+                final_eur_value = eth_after_tp * tp_price * (1 - self.config.fee_rate)
+                profit_eur = final_eur_value - current_balance
+
+            result['profit_eur'] = profit_eur
+
+        return result
+
     def check_breakout_and_reentry(self, current_price: float) -> Optional[str]:
         """
         Check for breakout and re-entry signals.
@@ -467,26 +525,66 @@ class FourHourRangeBot:
                 # Broke above range high
                 log(f"\n   🔺 BREAKOUT ABOVE: €{candle_close:,.2f} > €{self.four_hour_range.range_high:,.2f}")
                 log(f"      Re-entry target: Price closes back below €{self.four_hour_range.range_high:,.2f}")
+
+                # Calculate expected profit
+                current_balance = self.current_position.quantity if self.current_position.symbol == "ETH" else None
+                profit_calc = self.calculate_expected_profit(
+                    entry_price=self.four_hour_range.range_high,
+                    sl_price=candle_high,
+                    signal="SHORT",
+                    current_balance=current_balance
+                )
+
+                log(f"      Expected TP: €{profit_calc['tp_price']:,.2f}")
+                log(f"      Expected profit: +{profit_calc['profit_pct']:.2f}% after fees", end='')
+                if 'profit_eur' in profit_calc:
+                    log(f" (€{profit_calc['profit_eur']:,.2f})")
+                else:
+                    log("")
+
                 self.breakout_state.broke_above = True
                 self.breakout_state.breakout_high = candle_high
                 self.breakout_state.awaiting_reentry = True
                 self.breakout_state.entry_signal = "SHORT"  # Will short on re-entry
 
                 # Send iMessage alert
-                message = f"🔺 BREAKOUT ABOVE\n€{candle_close:,.2f} > €{self.four_hour_range.range_high:,.2f}\nRe-entry target: Below €{self.four_hour_range.range_high:,.2f}\nSignal: SHORT when re-entry occurs"
+                profit_text = f"+{profit_calc['profit_pct']:.2f}%"
+                if 'profit_eur' in profit_calc:
+                    profit_text += f" (€{profit_calc['profit_eur']:,.2f})"
+                message = f"🔺 BREAKOUT ABOVE\n€{candle_close:,.2f} > €{self.four_hour_range.range_high:,.2f}\nRe-entry target: Below €{self.four_hour_range.range_high:,.2f}\nExpected TP: €{profit_calc['tp_price']:,.2f}\nExpected profit: {profit_text}\nSignal: SHORT when re-entry occurs"
                 self.send_imessage(message)
 
             elif candle_close < self.four_hour_range.range_low:
                 # Broke below range low
                 log(f"\n   🔻 BREAKOUT BELOW: €{candle_close:,.2f} < €{self.four_hour_range.range_low:,.2f}")
                 log(f"      Re-entry target: Price closes back above €{self.four_hour_range.range_low:,.2f}")
+
+                # Calculate expected profit
+                current_balance = self.current_position.quantity if self.current_position.symbol == "EUR" else None
+                profit_calc = self.calculate_expected_profit(
+                    entry_price=self.four_hour_range.range_low,
+                    sl_price=candle_low,
+                    signal="LONG",
+                    current_balance=current_balance
+                )
+
+                log(f"      Expected TP: €{profit_calc['tp_price']:,.2f}")
+                log(f"      Expected profit: +{profit_calc['profit_pct']:.2f}% after fees", end='')
+                if 'profit_eur' in profit_calc:
+                    log(f" (€{profit_calc['profit_eur']:,.2f})")
+                else:
+                    log("")
+
                 self.breakout_state.broke_below = True
                 self.breakout_state.breakout_low = candle_low
                 self.breakout_state.awaiting_reentry = True
                 self.breakout_state.entry_signal = "LONG"  # Will long on re-entry
 
                 # Send iMessage alert
-                message = f"🔻 BREAKOUT BELOW\n€{candle_close:,.2f} < €{self.four_hour_range.range_low:,.2f}\nRe-entry target: Above €{self.four_hour_range.range_low:,.2f}\nSignal: LONG when re-entry occurs"
+                profit_text = f"+{profit_calc['profit_pct']:.2f}%"
+                if 'profit_eur' in profit_calc:
+                    profit_text += f" (€{profit_calc['profit_eur']:,.2f})"
+                message = f"🔻 BREAKOUT BELOW\n€{candle_close:,.2f} < €{self.four_hour_range.range_low:,.2f}\nRe-entry target: Above €{self.four_hour_range.range_low:,.2f}\nExpected TP: €{profit_calc['tp_price']:,.2f}\nExpected profit: {profit_text}\nSignal: LONG when re-entry occurs"
                 self.send_imessage(message)
 
         else:
