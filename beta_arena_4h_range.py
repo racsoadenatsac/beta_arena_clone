@@ -840,7 +840,7 @@ class FourHourRangeBot:
                     log(f"   Stop Loss: €{self.active_trade.stop_loss:,.2f}")
 
                     # Ask user if they want to exit
-                    user_response = get_user_input_with_timeout(f"💡 Exit trade? (Sell to EUR) y", timeout=25.0)
+                    user_response = get_user_input_with_timeout(f"💡 Exit trade? (Sell to EUR) y/n", timeout=25.0)
 
                     should_exit = False
                     if user_response and user_response.lower() == 'y':
@@ -863,7 +863,7 @@ class FourHourRangeBot:
                     log(f"   Take Profit: €{self.active_trade.take_profit:,.2f}")
 
                     # Ask user if they want to exit
-                    user_response = get_user_input_with_timeout(f"💡 Exit trade? (Sell to EUR) y", timeout=25.0)
+                    user_response = get_user_input_with_timeout(f"💡 Exit trade? (Sell to EUR) y/n", timeout=25.0)
 
                     should_exit = False
                     if user_response and user_response.lower() == 'y':
@@ -887,7 +887,7 @@ class FourHourRangeBot:
                     log(f"   Stop Loss: €{self.active_trade.stop_loss:,.2f}")
 
                     # Ask user if they want to exit
-                    user_response = get_user_input_with_timeout(f"💡 Exit trade? (Buy back ETH) y", timeout=25.0)
+                    user_response = get_user_input_with_timeout(f"💡 Exit trade? (Buy back ETH) y/n", timeout=25.0)
 
                     should_exit = False
                     if user_response and user_response.lower() == 'y':
@@ -910,7 +910,7 @@ class FourHourRangeBot:
                     log(f"   Take Profit: €{self.active_trade.take_profit:,.2f}")
 
                     # Ask user if they want to exit
-                    user_response = get_user_input_with_timeout(f"💡 Exit trade? (Buy back ETH) y", timeout=25.0)
+                    user_response = get_user_input_with_timeout(f"💡 Exit trade? (Buy back ETH) y/n", timeout=25.0)
 
                     should_exit = False
                     if user_response and user_response.lower() == 'y':
@@ -943,7 +943,7 @@ class FourHourRangeBot:
 
                 # Ask user if they want to trade (25-second timeout)
                 signal_type = "Sell to EUR" if entry_signal == "SHORT" else "Buy ETH"
-                user_response = get_user_input_with_timeout(f"💡 Trade? ({signal_type}) y", timeout=25.0)
+                user_response = get_user_input_with_timeout(f"💡 Trade? ({signal_type}) y/n", timeout=25.0)
 
                 # Determine if we should execute
                 should_execute = False
