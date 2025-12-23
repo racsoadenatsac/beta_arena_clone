@@ -524,6 +524,7 @@ class FourHourRangeBot:
             if candle_close > self.four_hour_range.range_high:
                 # Broke above range high
                 log(f"\n   🔺 BREAKOUT ABOVE: €{candle_close:,.2f} > €{self.four_hour_range.range_high:,.2f}")
+                log(f"      Current ETH price: €{current_price:,.2f}")
                 log(f"      Re-entry target: Price closes back below €{self.four_hour_range.range_high:,.2f}")
 
                 # Calculate expected profit
@@ -535,12 +536,15 @@ class FourHourRangeBot:
                     current_balance=current_balance
                 )
 
-                log(f"      Expected TP: €{profit_calc['tp_price']:,.2f}")
-                log(f"      Expected profit: +{profit_calc['profit_pct']:.2f}% after fees", end='')
-                if 'profit_eur' in profit_calc:
-                    log(f" (€{profit_calc['profit_eur']:,.2f})")
+                # Only show target if profitable after fees
+                if profit_calc['profit_pct'] > 0:
+                    log(f"      Profit target: €{profit_calc['tp_price']:,.2f} (+{profit_calc['profit_pct']:.2f}% after fees)", end='')
+                    if 'profit_eur' in profit_calc:
+                        log(f" = €{profit_calc['profit_eur']:,.2f} profit")
+                    else:
+                        log("")
                 else:
-                    log("")
+                    log(f"      ⚠️ No profitable target (fees exceed potential profit)")
 
                 self.breakout_state.broke_above = True
                 self.breakout_state.breakout_high = candle_high
@@ -548,15 +552,23 @@ class FourHourRangeBot:
                 self.breakout_state.entry_signal = "SHORT"  # Will short on re-entry
 
                 # Send iMessage alert
-                profit_text = f"+{profit_calc['profit_pct']:.2f}%"
-                if 'profit_eur' in profit_calc:
-                    profit_text += f" (€{profit_calc['profit_eur']:,.2f})"
-                message = f"🔺 BREAKOUT ABOVE\n€{candle_close:,.2f} > €{self.four_hour_range.range_high:,.2f}\nRe-entry target: Below €{self.four_hour_range.range_high:,.2f}\nExpected TP: €{profit_calc['tp_price']:,.2f}\nExpected profit: {profit_text}\nSignal: SHORT when re-entry occurs"
+                message = f"🔺 BREAKOUT ABOVE\n€{candle_close:,.2f} > €{self.four_hour_range.range_high:,.2f}\nCurrent: €{current_price:,.2f}\nRe-entry: Below €{self.four_hour_range.range_high:,.2f}"
+
+                if profit_calc['profit_pct'] > 0:
+                    profit_text = f"+{profit_calc['profit_pct']:.2f}%"
+                    if 'profit_eur' in profit_calc:
+                        profit_text += f" (€{profit_calc['profit_eur']:,.2f})"
+                    message += f"\nProfit target: €{profit_calc['tp_price']:,.2f} ({profit_text})"
+                else:
+                    message += f"\n⚠️ No profitable target after fees"
+
+                message += f"\nSignal: SHORT when re-entry occurs"
                 self.send_imessage(message)
 
             elif candle_close < self.four_hour_range.range_low:
                 # Broke below range low
                 log(f"\n   🔻 BREAKOUT BELOW: €{candle_close:,.2f} < €{self.four_hour_range.range_low:,.2f}")
+                log(f"      Current ETH price: €{current_price:,.2f}")
                 log(f"      Re-entry target: Price closes back above €{self.four_hour_range.range_low:,.2f}")
 
                 # Calculate expected profit
@@ -568,12 +580,15 @@ class FourHourRangeBot:
                     current_balance=current_balance
                 )
 
-                log(f"      Expected TP: €{profit_calc['tp_price']:,.2f}")
-                log(f"      Expected profit: +{profit_calc['profit_pct']:.2f}% after fees", end='')
-                if 'profit_eur' in profit_calc:
-                    log(f" (€{profit_calc['profit_eur']:,.2f})")
+                # Only show target if profitable after fees
+                if profit_calc['profit_pct'] > 0:
+                    log(f"      Profit target: €{profit_calc['tp_price']:,.2f} (+{profit_calc['profit_pct']:.2f}% after fees)", end='')
+                    if 'profit_eur' in profit_calc:
+                        log(f" = €{profit_calc['profit_eur']:,.2f} profit")
+                    else:
+                        log("")
                 else:
-                    log("")
+                    log(f"      ⚠️ No profitable target (fees exceed potential profit)")
 
                 self.breakout_state.broke_below = True
                 self.breakout_state.breakout_low = candle_low
@@ -581,10 +596,17 @@ class FourHourRangeBot:
                 self.breakout_state.entry_signal = "LONG"  # Will long on re-entry
 
                 # Send iMessage alert
-                profit_text = f"+{profit_calc['profit_pct']:.2f}%"
-                if 'profit_eur' in profit_calc:
-                    profit_text += f" (€{profit_calc['profit_eur']:,.2f})"
-                message = f"🔻 BREAKOUT BELOW\n€{candle_close:,.2f} < €{self.four_hour_range.range_low:,.2f}\nRe-entry target: Above €{self.four_hour_range.range_low:,.2f}\nExpected TP: €{profit_calc['tp_price']:,.2f}\nExpected profit: {profit_text}\nSignal: LONG when re-entry occurs"
+                message = f"🔻 BREAKOUT BELOW\n€{candle_close:,.2f} < €{self.four_hour_range.range_low:,.2f}\nCurrent: €{current_price:,.2f}\nRe-entry: Above €{self.four_hour_range.range_low:,.2f}"
+
+                if profit_calc['profit_pct'] > 0:
+                    profit_text = f"+{profit_calc['profit_pct']:.2f}%"
+                    if 'profit_eur' in profit_calc:
+                        profit_text += f" (€{profit_calc['profit_eur']:,.2f})"
+                    message += f"\nProfit target: €{profit_calc['tp_price']:,.2f} ({profit_text})"
+                else:
+                    message += f"\n⚠️ No profitable target after fees"
+
+                message += f"\nSignal: LONG when re-entry occurs"
                 self.send_imessage(message)
 
         else:
