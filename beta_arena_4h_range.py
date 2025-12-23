@@ -538,11 +538,10 @@ class FourHourRangeBot:
 
                 # Only show target if profitable after fees
                 if profit_calc['profit_pct'] > 0:
-                    log(f"      Profit target: €{profit_calc['tp_price']:,.2f} (+{profit_calc['profit_pct']:.2f}% after fees)", end='')
                     if 'profit_eur' in profit_calc:
-                        log(f" = €{profit_calc['profit_eur']:,.2f} profit")
+                        log(f"      Profit target: €{profit_calc['tp_price']:,.2f} (+{profit_calc['profit_pct']:.2f}% after fees) = €{profit_calc['profit_eur']:,.2f} profit")
                     else:
-                        log("")
+                        log(f"      Profit target: €{profit_calc['tp_price']:,.2f} (+{profit_calc['profit_pct']:.2f}% after fees)")
                 else:
                     log(f"      ⚠️ No profitable target (fees exceed potential profit)")
 
@@ -582,11 +581,10 @@ class FourHourRangeBot:
 
                 # Only show target if profitable after fees
                 if profit_calc['profit_pct'] > 0:
-                    log(f"      Profit target: €{profit_calc['tp_price']:,.2f} (+{profit_calc['profit_pct']:.2f}% after fees)", end='')
                     if 'profit_eur' in profit_calc:
-                        log(f" = €{profit_calc['profit_eur']:,.2f} profit")
+                        log(f"      Profit target: €{profit_calc['tp_price']:,.2f} (+{profit_calc['profit_pct']:.2f}% after fees) = €{profit_calc['profit_eur']:,.2f} profit")
                     else:
-                        log("")
+                        log(f"      Profit target: €{profit_calc['tp_price']:,.2f} (+{profit_calc['profit_pct']:.2f}% after fees)")
                 else:
                     log(f"      ⚠️ No profitable target (fees exceed potential profit)")
 
