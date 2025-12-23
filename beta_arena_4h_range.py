@@ -469,9 +469,9 @@ class FourHourRangeBot:
         # Calculate price movement percentage
         price_movement_pct = abs(tp_price - entry_price) / entry_price * 100
 
-        # Subtract fees (0.26% on entry + 0.26% on exit = 0.52% total)
-        total_fee_pct = self.config.fee_rate * 2 * 100  # 0.52%
-        net_profit_pct = price_movement_pct - total_fee_pct
+        # Subtract only entry fee (0.26%) - exit fee will be paid later
+        entry_fee_pct = self.config.fee_rate * 100  # 0.26%
+        net_profit_pct = price_movement_pct - entry_fee_pct
 
         result = {
             'tp_price': tp_price,
@@ -483,17 +483,15 @@ class FourHourRangeBot:
         # Calculate EUR profit if balance provided
         if current_balance is not None:
             if signal == "SHORT":
-                # Starting with ETH, ending with EUR
+                # Starting with ETH, ending with EUR at TP
                 eur_after_entry = current_balance * entry_price * (1 - self.config.fee_rate)
-                eur_after_tp = eur_after_entry * (1 + (price_movement_pct / 100))
-                final_eur = eur_after_tp * (1 - self.config.fee_rate)
-                profit_eur = final_eur - (current_balance * entry_price)  # Compare to no-trade scenario
+                eur_at_tp = eur_after_entry * (1 + (price_movement_pct / 100))
+                profit_eur = eur_at_tp - (current_balance * entry_price)  # Profit after entry fee only
             else:  # LONG
-                # Starting with EUR, ending with ETH
+                # Starting with EUR, buying ETH, value at TP
                 eth_after_entry = (current_balance / entry_price) * (1 - self.config.fee_rate)
-                eth_after_tp = eth_after_entry  # Same ETH amount
-                final_eur_value = eth_after_tp * tp_price * (1 - self.config.fee_rate)
-                profit_eur = final_eur_value - current_balance
+                eur_value_at_tp = eth_after_entry * tp_price
+                profit_eur = eur_value_at_tp - current_balance  # Profit after entry fee only
 
             result['profit_eur'] = profit_eur
 
@@ -536,14 +534,14 @@ class FourHourRangeBot:
                     current_balance=current_balance
                 )
 
-                # Only show target if profitable after fees
+                # Only show target if profitable after entry fee
                 if profit_calc['profit_pct'] > 0:
                     if 'profit_eur' in profit_calc:
-                        log(f"      Profit target: €{profit_calc['tp_price']:,.2f} (+{profit_calc['profit_pct']:.2f}% after fees) = €{profit_calc['profit_eur']:,.2f} profit")
+                        log(f"      Profit target: €{profit_calc['tp_price']:,.2f} (+{profit_calc['profit_pct']:.2f}% after entry fee) = €{profit_calc['profit_eur']:,.2f} profit")
                     else:
-                        log(f"      Profit target: €{profit_calc['tp_price']:,.2f} (+{profit_calc['profit_pct']:.2f}% after fees)")
+                        log(f"      Profit target: €{profit_calc['tp_price']:,.2f} (+{profit_calc['profit_pct']:.2f}% after entry fee)")
                 else:
-                    log(f"      ⚠️ No profitable target (fees exceed potential profit)")
+                    log(f"      ⚠️ No profitable target (entry fee exceeds potential profit)")
 
                 self.breakout_state.broke_above = True
                 self.breakout_state.breakout_high = candle_high
@@ -559,7 +557,7 @@ class FourHourRangeBot:
                         profit_text += f" (€{profit_calc['profit_eur']:,.2f})"
                     message += f"\nProfit target: €{profit_calc['tp_price']:,.2f} ({profit_text})"
                 else:
-                    message += f"\n⚠️ No profitable target after fees"
+                    message += f"\n⚠️ No profitable target after entry fee"
 
                 message += f"\nSignal: SHORT when re-entry occurs"
                 self.send_imessage(message)
@@ -579,14 +577,14 @@ class FourHourRangeBot:
                     current_balance=current_balance
                 )
 
-                # Only show target if profitable after fees
+                # Only show target if profitable after entry fee
                 if profit_calc['profit_pct'] > 0:
                     if 'profit_eur' in profit_calc:
-                        log(f"      Profit target: €{profit_calc['tp_price']:,.2f} (+{profit_calc['profit_pct']:.2f}% after fees) = €{profit_calc['profit_eur']:,.2f} profit")
+                        log(f"      Profit target: €{profit_calc['tp_price']:,.2f} (+{profit_calc['profit_pct']:.2f}% after entry fee) = €{profit_calc['profit_eur']:,.2f} profit")
                     else:
-                        log(f"      Profit target: €{profit_calc['tp_price']:,.2f} (+{profit_calc['profit_pct']:.2f}% after fees)")
+                        log(f"      Profit target: €{profit_calc['tp_price']:,.2f} (+{profit_calc['profit_pct']:.2f}% after entry fee)")
                 else:
-                    log(f"      ⚠️ No profitable target (fees exceed potential profit)")
+                    log(f"      ⚠️ No profitable target (entry fee exceeds potential profit)")
 
                 self.breakout_state.broke_below = True
                 self.breakout_state.breakout_low = candle_low
@@ -602,7 +600,7 @@ class FourHourRangeBot:
                         profit_text += f" (€{profit_calc['profit_eur']:,.2f})"
                     message += f"\nProfit target: €{profit_calc['tp_price']:,.2f} ({profit_text})"
                 else:
-                    message += f"\n⚠️ No profitable target after fees"
+                    message += f"\n⚠️ No profitable target after entry fee"
 
                 message += f"\nSignal: LONG when re-entry occurs"
                 self.send_imessage(message)
