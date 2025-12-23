@@ -31,6 +31,10 @@ from dataclasses import dataclass, field
 import sqlite3
 from collections import deque
 import pytz
+import select
+import termios
+import tty
+import subprocess
 
 # ==============================================================================
 # CONFIGURATION
@@ -192,6 +196,52 @@ class KrakenAPI:
         ask = float(ticker.get("a", [0])[0])
         last = float(ticker.get("c", [0])[0])
         return bid, ask, last
+
+# ==============================================================================
+# HELPER FUNCTIONS
+# ==============================================================================
+
+def get_user_input_with_timeout(prompt: str, timeout: float = 25.0) -> Optional[str]:
+    """
+    Get user input with a timeout (non-blocking).
+    Returns user input if provided within timeout, otherwise None.
+    Works on Unix-like systems (Linux/macOS).
+    """
+    try:
+        # Save current terminal settings
+        old_settings = termios.tcgetattr(sys.stdin)
+
+        try:
+            # Set terminal to raw mode for immediate input
+            tty.setraw(sys.stdin.fileno())
+
+            # Display prompt
+            sys.stdout.write(f"\n{prompt} ")
+            sys.stdout.flush()
+
+            # Wait for input with timeout
+            ready, _, _ = select.select([sys.stdin], [], [], timeout)
+
+            if ready:
+                # Read single character
+                char = sys.stdin.read(1)
+                sys.stdout.write(f"{char}\n")
+                sys.stdout.flush()
+                return char
+            else:
+                # Timeout - no input
+                sys.stdout.write("(timeout)\n")
+                sys.stdout.flush()
+                return None
+
+        finally:
+            # Restore terminal settings
+            termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
+
+    except Exception as e:
+        # Fallback: if anything fails, just return None
+        print(f"\n⚠️ Input error: {e}")
+        return None
 
 # ==============================================================================
 # BOT CLASS
@@ -390,6 +440,10 @@ class FourHourRangeBot:
                 self.breakout_state.awaiting_reentry = True
                 self.breakout_state.entry_signal = "SHORT"  # Will short on re-entry
 
+                # Send iMessage alert
+                message = f"🔺 BREAKOUT ABOVE\n€{candle_close:,.2f} > €{self.four_hour_range.range_high:,.2f}\nWaiting for re-entry..."
+                self.send_imessage(message)
+
             elif candle_close < self.four_hour_range.range_low:
                 # Broke below range low
                 print(f"\n   🔻 BREAKOUT BELOW: €{candle_close:,.2f} < €{self.four_hour_range.range_low:,.2f}")
@@ -397,6 +451,10 @@ class FourHourRangeBot:
                 self.breakout_state.breakout_low = candle_low
                 self.breakout_state.awaiting_reentry = True
                 self.breakout_state.entry_signal = "LONG"  # Will long on re-entry
+
+                # Send iMessage alert
+                message = f"🔻 BREAKOUT BELOW\n€{candle_close:,.2f} < €{self.four_hour_range.range_low:,.2f}\nWaiting for re-entry..."
+                self.send_imessage(message)
 
         else:
             # Already broke out, waiting for re-entry
@@ -407,9 +465,12 @@ class FourHourRangeBot:
                 print(f"\n   ↩️ RE-ENTRY: €{candle_close:,.2f} back inside range")
                 entry_signal = self.breakout_state.entry_signal
 
-                # Reset state
-                self.breakout_state.reset()
+                # Send iMessage alert
+                signal_desc = "LONG (Buy ETH)" if entry_signal == "LONG" else "SHORT (Sell to EUR)"
+                message = f"↩️ RE-ENTRY DETECTED\n€{candle_close:,.2f} back inside range\nSignal: {signal_desc}\nAwaiting your decision..."
+                self.send_imessage(message)
 
+                # Don't reset state yet - will reset after trade decision
                 return entry_signal  # Return "LONG" or "SHORT"
 
         return None
@@ -555,32 +616,68 @@ class FourHourRangeBot:
                 print(f"   Stop Loss: €{stop_loss:,.2f}")
                 print(f"   Take Profit: €{take_profit:,.2f}")
 
-                # Execute trade based on signal
-                if entry_signal == "SHORT" and self.current_position.symbol == "ETH":
-                    # Sell ETH to EUR
-                    self.execute_trade("ETH", "EUR", "4H Range - SHORT Signal")
-                    self.active_trade = ActiveTrade(
-                        direction="SHORT",
-                        entry_price=current_price,
-                        entry_asset="EUR",
-                        entry_quantity=self.current_position.quantity,
-                        stop_loss=stop_loss,
-                        take_profit=take_profit,
-                        entry_time=datetime.now()
-                    )
+                # Ask user if they want to trade (25-second timeout)
+                signal_type = "Sell to EUR" if entry_signal == "SHORT" else "Buy ETH"
+                user_response = get_user_input_with_timeout(f"💡 Trade? ({signal_type}) y", timeout=25.0)
 
-                elif entry_signal == "LONG" and self.current_position.symbol == "EUR":
-                    # Buy ETH with EUR
-                    self.execute_trade("EUR", "ETH", "4H Range - LONG Signal")
-                    self.active_trade = ActiveTrade(
-                        direction="LONG",
-                        entry_price=current_price,
-                        entry_asset="ETH",
-                        entry_quantity=self.current_position.quantity,
-                        stop_loss=stop_loss,
-                        take_profit=take_profit,
-                        entry_time=datetime.now()
-                    )
+                # Determine if we should execute
+                should_execute = False
+                execution_reason = ""
+
+                if user_response and user_response.lower() == 'y':
+                    # User explicitly approved
+                    should_execute = True
+                    execution_reason = "User Override"
+                    print(f"\n   👤 USER APPROVED: Executing trade")
+                elif user_response is None:
+                    # Timeout - check if conditions are met
+                    print(f"\n   ⏰ TIMEOUT: Checking conditions for automatic execution...")
+
+                    # Check if we're in correct position for the signal
+                    if entry_signal == "SHORT" and self.current_position.symbol == "ETH":
+                        should_execute = True
+                        execution_reason = "Auto (Timeout)"
+                        print(f"   ✅ Conditions met - executing automatically")
+                    elif entry_signal == "LONG" and self.current_position.symbol == "EUR":
+                        should_execute = True
+                        execution_reason = "Auto (Timeout)"
+                        print(f"   ✅ Conditions met - executing automatically")
+                    else:
+                        print(f"   ⏸️ Conditions not met - skipping trade")
+                else:
+                    # User declined or gave invalid input
+                    print(f"\n   ⏸️ USER DECLINED: Skipping trade")
+
+                # Reset breakout state
+                self.breakout_state.reset()
+
+                # Execute trade if approved
+                if should_execute:
+                    if entry_signal == "SHORT" and self.current_position.symbol == "ETH":
+                        # Sell ETH to EUR
+                        self.execute_trade("ETH", "EUR", f"4H Range - SHORT Signal ({execution_reason})")
+                        self.active_trade = ActiveTrade(
+                            direction="SHORT",
+                            entry_price=current_price,
+                            entry_asset="EUR",
+                            entry_quantity=self.current_position.quantity,
+                            stop_loss=stop_loss,
+                            take_profit=take_profit,
+                            entry_time=datetime.now()
+                        )
+
+                    elif entry_signal == "LONG" and self.current_position.symbol == "EUR":
+                        # Buy ETH with EUR
+                        self.execute_trade("EUR", "ETH", f"4H Range - LONG Signal ({execution_reason})")
+                        self.active_trade = ActiveTrade(
+                            direction="LONG",
+                            entry_price=current_price,
+                            entry_asset="ETH",
+                            entry_quantity=self.current_position.quantity,
+                            stop_loss=stop_loss,
+                            take_profit=take_profit,
+                            entry_time=datetime.now()
+                        )
 
         # Log performance
         self.cursor.execute("""
