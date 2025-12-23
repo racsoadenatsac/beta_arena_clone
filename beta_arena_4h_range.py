@@ -742,6 +742,7 @@ class FourHourRangeBot:
 
         log(f"\n📊 4-HOUR RANGE ({self.four_hour_range.date}):")
         log(f"   High: €{self.four_hour_range.range_high:,.2f}")
+        log(f"   Current: €{current_price:,.2f}")
         log(f"   Low: €{self.four_hour_range.range_low:,.2f}")
 
         # Show target prices if we have one
@@ -779,8 +780,8 @@ class FourHourRangeBot:
             eth_af_amount = profit_af_eur / current_price
 
             log(f"   Fees: €{fee_eur:,.2f}")
-            log(f"   Target BF: €{profit_bf_eur:,.2f} (ETH {eth_bf_amount:.6f}) @ €{target_price_bf:,.2f}")
-            log(f"   Target AF: €{profit_af_eur:,.2f} (ETH {eth_af_amount:.6f}) @ €{target_price_af:,.2f})")
+            log(f"   Target BF: €{profit_bf_eur:,.2f} (ETH {eth_bf_amount:.6f}) @ €{current_price:,.2f}")
+            log(f"   Target AF: €{profit_af_eur:,.2f} (ETH {eth_af_amount:.6f}) @ €{current_price:,.2f})")
 
         elif self.breakout_state.awaiting_reentry:
             # Breakout occurred, awaiting re-entry - calculate expected target prices
@@ -836,8 +837,8 @@ class FourHourRangeBot:
             eth_af_amount = profit_af_eur / current_price
 
             log(f"   Fees: €{fee_eur:,.2f}")
-            log(f"   Target BF: €{profit_bf_eur:,.2f} (ETH {eth_bf_amount:.6f}) @ €{target_price_bf:,.2f}")
-            log(f"   Target AF: €{profit_af_eur:,.2f} (ETH {eth_af_amount:.6f}) @ €{target_price_af:,.2f})")
+            log(f"   Target BF: €{profit_bf_eur:,.2f} (ETH {eth_bf_amount:.6f}) @ €{current_price:,.2f}")
+            log(f"   Target AF: €{profit_af_eur:,.2f} (ETH {eth_af_amount:.6f}) @ €{current_price:,.2f})")
 
         # Check if we have an active trade with SL/TP
         if self.active_trade:
