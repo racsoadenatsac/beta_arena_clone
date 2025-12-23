@@ -1097,7 +1097,8 @@ class FourHourRangeBot:
         self.conn.commit()
 
         # Send notification
-        message = f"🔄 TRADE: {from_asset}→{to_asset}\n€{value:,.2f} | Fee: €{fee:.2f}\n{reason}"
+        eth_amount = quantity if from_asset == "ETH" else new_quantity
+        message = f"🔄 TRADE: {from_asset}→{to_asset}\nETH {eth_amount:.6f} | €{value:,.2f} | Fee: €{fee:.2f}\n{reason}"
         self.send_imessage(message)
 
     def execute_exit_trade(self, reason: str):
