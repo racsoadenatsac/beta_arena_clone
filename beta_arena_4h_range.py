@@ -743,7 +743,6 @@ class FourHourRangeBot:
         log(f"\n📊 4-HOUR RANGE ({self.four_hour_range.date}):")
         log(f"   High: €{self.four_hour_range.range_high:,.2f}")
         log(f"   Low: €{self.four_hour_range.range_low:,.2f}")
-        log(f"   Current: €{current_price:,.2f}")
 
         # Show target prices if we have one
         if self.active_trade:
