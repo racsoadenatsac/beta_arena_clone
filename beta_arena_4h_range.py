@@ -752,32 +752,105 @@ class FourHourRangeBot:
             log(f"   Stop Loss: €{self.active_trade.stop_loss:,.2f}")
             log(f"   Take Profit: €{self.active_trade.take_profit:,.2f}")
 
+            # Calculate expected profit at TP (after entry fee already paid)
+            price_move_pct = abs(self.active_trade.take_profit - self.active_trade.entry_price) / self.active_trade.entry_price * 100
+            entry_fee_pct = self.config.fee_rate * 100
+            net_profit_pct = price_move_pct - entry_fee_pct
+            log(f"   Expected profit at TP: +{net_profit_pct:.2f}% after entry fee")
+
             # Check if SL or TP hit
             if self.active_trade.direction == "LONG":
                 if current_price <= self.active_trade.stop_loss:
                     log(f"\n   🛑 STOP LOSS HIT!")
-                    # Execute exit trade
-                    self.execute_exit_trade("Stop Loss Hit")
-                    self.active_trade = None
+                    log(f"   Current: €{current_price:,.2f}")
+                    log(f"   Stop Loss: €{self.active_trade.stop_loss:,.2f}")
+
+                    # Ask user if they want to exit
+                    user_response = get_user_input_with_timeout(f"💡 Exit trade? (Sell to EUR) y", timeout=25.0)
+
+                    should_exit = False
+                    if user_response and user_response.lower() == 'y':
+                        should_exit = True
+                        log(f"\n   👤 USER APPROVED: Exiting trade")
+                    elif user_response is None:
+                        log(f"\n   ⏰ TIMEOUT: Auto-exiting at Stop Loss")
+                        should_exit = True
+                    else:
+                        log(f"\n   ⏸️ USER DECLINED: Keeping position")
+
+                    if should_exit:
+                        self.execute_exit_trade("Stop Loss Hit")
+                        self.active_trade = None
                     return
+
                 elif current_price >= self.active_trade.take_profit:
                     log(f"\n   ✅ TAKE PROFIT HIT!")
-                    # Execute exit trade
-                    self.execute_exit_trade("Take Profit Hit")
-                    self.active_trade = None
+                    log(f"   Current: €{current_price:,.2f}")
+                    log(f"   Take Profit: €{self.active_trade.take_profit:,.2f}")
+
+                    # Ask user if they want to exit
+                    user_response = get_user_input_with_timeout(f"💡 Exit trade? (Sell to EUR) y", timeout=25.0)
+
+                    should_exit = False
+                    if user_response and user_response.lower() == 'y':
+                        should_exit = True
+                        log(f"\n   👤 USER APPROVED: Exiting trade")
+                    elif user_response is None:
+                        log(f"\n   ⏰ TIMEOUT: Auto-exiting at Take Profit")
+                        should_exit = True
+                    else:
+                        log(f"\n   ⏸️ USER DECLINED: Keeping position")
+
+                    if should_exit:
+                        self.execute_exit_trade("Take Profit Hit")
+                        self.active_trade = None
                     return
+
             else:  # SHORT
                 if current_price >= self.active_trade.stop_loss:
                     log(f"\n   🛑 STOP LOSS HIT!")
-                    # Execute exit trade
-                    self.execute_exit_trade("Stop Loss Hit")
-                    self.active_trade = None
+                    log(f"   Current: €{current_price:,.2f}")
+                    log(f"   Stop Loss: €{self.active_trade.stop_loss:,.2f}")
+
+                    # Ask user if they want to exit
+                    user_response = get_user_input_with_timeout(f"💡 Exit trade? (Buy back ETH) y", timeout=25.0)
+
+                    should_exit = False
+                    if user_response and user_response.lower() == 'y':
+                        should_exit = True
+                        log(f"\n   👤 USER APPROVED: Exiting trade")
+                    elif user_response is None:
+                        log(f"\n   ⏰ TIMEOUT: Auto-exiting at Stop Loss")
+                        should_exit = True
+                    else:
+                        log(f"\n   ⏸️ USER DECLINED: Keeping position")
+
+                    if should_exit:
+                        self.execute_exit_trade("Stop Loss Hit")
+                        self.active_trade = None
                     return
+
                 elif current_price <= self.active_trade.take_profit:
                     log(f"\n   ✅ TAKE PROFIT HIT!")
-                    # Execute exit trade
-                    self.execute_exit_trade("Take Profit Hit")
-                    self.active_trade = None
+                    log(f"   Current: €{current_price:,.2f}")
+                    log(f"   Take Profit: €{self.active_trade.take_profit:,.2f}")
+
+                    # Ask user if they want to exit
+                    user_response = get_user_input_with_timeout(f"💡 Exit trade? (Buy back ETH) y", timeout=25.0)
+
+                    should_exit = False
+                    if user_response and user_response.lower() == 'y':
+                        should_exit = True
+                        log(f"\n   👤 USER APPROVED: Exiting trade")
+                    elif user_response is None:
+                        log(f"\n   ⏰ TIMEOUT: Auto-exiting at Take Profit")
+                        should_exit = True
+                    else:
+                        log(f"\n   ⏸️ USER DECLINED: Keeping position")
+
+                    if should_exit:
+                        self.execute_exit_trade("Take Profit Hit")
+                        self.active_trade = None
                     return
 
         # Check for entry signals (only if no active trade)
