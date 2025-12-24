@@ -543,7 +543,6 @@ class FourHourRangeBot:
                 )
 
                 # Only show target if profitable after entry fee
-                log(f"      Stop Loss: €{candle_high:,.2f}")
                 if profit_calc['profit_pct'] > 0:
                     if 'profit_eur' in profit_calc:
                         log(f"      Take Profit: €{profit_calc['tp_price']:,.2f} (+{profit_calc['profit_pct']:.2f}% after entry fee) = €{profit_calc['profit_eur']:,.2f} profit")
@@ -564,7 +563,6 @@ class FourHourRangeBot:
                     profit_text = f"+{profit_calc['profit_pct']:.2f}%"
                     if 'profit_eur' in profit_calc:
                         profit_text += f" (€{profit_calc['profit_eur']:,.2f})"
-                    message += f"\nStop Loss: €{candle_high:,.2f}"
                     message += f"\nTake Profit: €{profit_calc['tp_price']:,.2f} ({profit_text})"
                 else:
                     message += f"\n⚠️ No profitable target after entry fee"
@@ -588,7 +586,6 @@ class FourHourRangeBot:
                 )
 
                 # Only show target if profitable after entry fee
-                log(f"      Stop Loss: €{candle_low:,.2f}")
                 if profit_calc['profit_pct'] > 0:
                     if 'profit_eur' in profit_calc:
                         log(f"      Take Profit: €{profit_calc['tp_price']:,.2f} (+{profit_calc['profit_pct']:.2f}% after entry fee) = €{profit_calc['profit_eur']:,.2f} profit")
@@ -609,7 +606,6 @@ class FourHourRangeBot:
                     profit_text = f"+{profit_calc['profit_pct']:.2f}%"
                     if 'profit_eur' in profit_calc:
                         profit_text += f" (€{profit_calc['profit_eur']:,.2f})"
-                    message += f"\nStop Loss: €{candle_low:,.2f}"
                     message += f"\nTake Profit: €{profit_calc['tp_price']:,.2f} ({profit_text})"
                 else:
                     message += f"\n⚠️ No profitable target after entry fee"
@@ -645,7 +641,7 @@ class FourHourRangeBot:
 
                 # Send iMessage alert with TP
                 signal_desc = "LONG (Buy ETH)" if entry_signal == "LONG" else "SHORT (Sell to EUR)"
-                message = f"↩️ RE-ENTRY DETECTED\n€{candle_close:,.2f} back inside range\nSignal: {signal_desc}\nStop Loss: €{expected_sl:,.2f}\nTake Profit: €{expected_tp:,.2f}\nAwaiting your decision..."
+                message = f"↩️ RE-ENTRY DETECTED\n€{candle_close:,.2f} back inside range\nSignal: {signal_desc}\nTake Profit: €{expected_tp:,.2f}\nAwaiting your decision..."
                 self.send_imessage(message)
 
                 # Don't reset state yet - will reset after trade decision
@@ -847,7 +843,6 @@ class FourHourRangeBot:
         if self.active_trade:
             log(f"\n🎯 ACTIVE TRADE ({self.active_trade.direction}):")
             log(f"   Entry: €{self.active_trade.entry_price:,.2f}")
-            log(f"   Stop Loss: €{self.active_trade.stop_loss:,.2f}")
             log(f"   Take Profit: €{self.active_trade.take_profit:,.2f}")
 
             # Calculate expected profit at TP (after entry fee already paid)
@@ -856,32 +851,9 @@ class FourHourRangeBot:
             net_profit_pct = price_move_pct - entry_fee_pct
             log(f"   Expected profit at TP: +{net_profit_pct:.2f}% after entry fee")
 
-            # Check if SL or TP hit
+            # Check if TP hit
             if self.active_trade.direction == "LONG":
-                if current_price <= self.active_trade.stop_loss:
-                    log(f"\n   🛑 STOP LOSS HIT!")
-                    log(f"   Current: €{current_price:,.2f}")
-                    log(f"   Stop Loss: €{self.active_trade.stop_loss:,.2f}")
-
-                    # Ask user if they want to exit
-                    user_response = get_user_input_with_timeout(f"💡 Exit trade? (Sell to EUR) y/n", timeout=25.0)
-
-                    should_exit = False
-                    if user_response and user_response.lower() == 'y':
-                        should_exit = True
-                        log(f"\n   👤 USER APPROVED: Exiting trade")
-                    elif user_response is None:
-                        log(f"\n   ⏰ TIMEOUT: Auto-exiting at Stop Loss")
-                        should_exit = True
-                    else:
-                        log(f"\n   ⏸️ USER DECLINED: Keeping position")
-
-                    if should_exit:
-                        self.execute_exit_trade("Stop Loss Hit")
-                        self.active_trade = None
-                    return
-
-                elif current_price >= self.active_trade.take_profit:
+                if current_price >= self.active_trade.take_profit:
                     log(f"\n   ✅ TAKE PROFIT HIT!")
                     log(f"   Current: €{current_price:,.2f}")
                     log(f"   Take Profit: €{self.active_trade.take_profit:,.2f}")
@@ -905,30 +877,7 @@ class FourHourRangeBot:
                     return
 
             else:  # SHORT
-                if current_price >= self.active_trade.stop_loss:
-                    log(f"\n   🛑 STOP LOSS HIT!")
-                    log(f"   Current: €{current_price:,.2f}")
-                    log(f"   Stop Loss: €{self.active_trade.stop_loss:,.2f}")
-
-                    # Ask user if they want to exit
-                    user_response = get_user_input_with_timeout(f"💡 Exit trade? (Buy back ETH) y/n", timeout=25.0)
-
-                    should_exit = False
-                    if user_response and user_response.lower() == 'y':
-                        should_exit = True
-                        log(f"\n   👤 USER APPROVED: Exiting trade")
-                    elif user_response is None:
-                        log(f"\n   ⏰ TIMEOUT: Auto-exiting at Stop Loss")
-                        should_exit = True
-                    else:
-                        log(f"\n   ⏸️ USER DECLINED: Keeping position")
-
-                    if should_exit:
-                        self.execute_exit_trade("Stop Loss Hit")
-                        self.active_trade = None
-                    return
-
-                elif current_price <= self.active_trade.take_profit:
+                if current_price <= self.active_trade.take_profit:
                     log(f"\n   ✅ TAKE PROFIT HIT!")
                     log(f"   Current: €{current_price:,.2f}")
                     log(f"   Take Profit: €{self.active_trade.take_profit:,.2f}")
@@ -962,7 +911,6 @@ class FourHourRangeBot:
                 stop_loss, take_profit = self.calculate_stop_loss_and_take_profit(entry_signal, current_price)
 
                 log(f"   Entry: €{current_price:,.2f}")
-                log(f"   Stop Loss: €{stop_loss:,.2f}")
                 log(f"   Take Profit: €{take_profit:,.2f}")
 
                 # Ask user if they want to trade (25-second timeout)
